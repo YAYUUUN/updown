@@ -22,7 +22,17 @@ On BTC, ETH and SOL (Binance, 15-minute candles, about 2 years, ~210,000 rows, e
 
 ![AUC by regime](docs/auc_by_regime.png)
 
-Full tables: [`estudios/resultados_velas_regimenes.md`](estudios/resultados_velas_regimenes.md), [`estudios/resultados_comparativa.md`](estudios/resultados_comparativa.md), [`estudios/resultados_transformer_15m.md`](estudios/resultados_transformer_15m.md).
+Full tables: [`estudios/resultados_velas_regimenes.md`](estudios/resultados_velas_regimenes.md), [`estudios/resultados_comparativa.md`](estudios/resultados_comparativa.md), [`estudios/resultados_transformer_15m.md`](estudios/resultados_transformer_15m.md). These were produced before the order-flow features and the fixed lasso seed were added; re-running the studies will move the numbers slightly.
+
+### Being measured next
+
+`python -m estudios.etapas_confianza` asks three new questions on the same crypto data and writes `estudios/resultados_etapas_confianza.md`:
+
+1. **Does the model hit more when it is more confident?** An AUC of 0.54 is an average over all candles; sometimes the model says 50.5% and sometimes 58%. The study ranks out-of-sample predictions by their distance from 50% and measures the hit rate of the 100%, 50%, 20%, 10% and 5% most confident ones.
+2. **Which market stages does a hidden Markov model find**, how often is it at least 90% sure, and does it agree with the rule-based regimes?
+3. **Does specialising by stage help, or does it just cut the data into smaller pieces?** A per-stage model (the best submodel of each stage, chosen on validation) against the same procedure without stages, the best single model and both baselines.
+
+No results are published for it yet: run it to get them (more than an hour on a 4-core laptop; `--objetivos vela_1` halves it).
 
 ## How it avoids fooling itself
 
@@ -36,6 +46,11 @@ Full tables: [`estudios/resultados_velas_regimenes.md`](estudios/resultados_vela
 | Consistency: beat the baseline in ≥ 2/3 of blocks | One lucky period is not a signal. |
 | Synthetic audit (`updown auditoria`, run in CI) | On a random walk the verdict must be "no edge"; a planted signal must be found; an injected future value must make AUC jump. |
 | Prediction log written before outcomes (`updown vivo`) | The only track record that cannot be tuned after the fact. |
+| Confidence cut chosen from the probabilities only, plus a version with the cut fixed from the previous block | Choosing the cut by looking at hits would inflate the result; a cut computed from future probabilities is not available live. |
+| Intervals clustered by day | Three assets at the same time and consecutive candles are not independent bets. |
+| HMM fitted on the training block only, with *filtered* probabilities | Smoothed probabilities and the Viterbi path are recomputed with data that came later. |
+| Per-stage submodels chosen on a purged inner validation, never on the test block | Picking the winner of each stage on the test period would be fitting the test. |
+| Per-stage model compared with the same procedure without stages, counted as one more trial, paired test | Separates the effect of specialising from the effect of choosing a model. |
 
 ## Install
 
@@ -57,10 +72,18 @@ updown auditoria                                            # check the evaluato
 updown evaluar SPY --intervalo 1d                           # 13 models, walk-forward
 updown evaluar BTCUSDT,ETHUSDT --fuente binance --intervalo 15m --horizonte 4
 python -m estudios.velas_regimenes                          # per-candle and per-regime study
+python -m estudios.etapas_confianza                         # confidence curve, HMM stages, per-stage models
+python -m estudios.graficos                                 # README charts from the results files
 streamlit run app.py                                        # web app
 ```
 
-The **web app** shows which regime each market is in right now and, with a regime selector, which model predicts each of the next four candles best in that regime.
+`updown evaluar` also prints the hit rate by confidence of the best model.
+
+The **web app** shows which stage each market is in right now (rule-based label plus the HMM probabilities, as a description and not as a signal) and has three tabs:
+
+- **Por vela**: with a regime selector, which model predicts each of the next four candles best in that regime.
+- **Ranking por etapa**: with the same selector over rule-based or HMM stages, which model validation picked in each block, how every candidate did out of sample in that stage, whether both rankings agree, and whether the per-stage model beats the single one.
+- **Confianza**: hit rate against the share of candles the model dares to predict, with its 95% interval.
 
 ## Models
 
@@ -72,11 +95,15 @@ Baselines: `siempre_sube` (training up-frequency) and `momentum` (P(up | last ca
 | Probabilistic / neighbours | `naive_bayes`, `knn` (6 fixed features) |
 | Non-linear | `random_forest`, `extra_trees`, `gradient_boosting`, `red_neuronal` (MLP) |
 | Ensemble | `ensemble` (mean of ridge, lasso, random forest, gradient boosting) |
-| Deep | `transformer`: 2-layer encoder over the last 64 candles (return, range, body, relative volume) plus the tabular features; one network predicts all four candles and the full hour. |
+| Deep | `transformer`: 2-layer encoder over the last 64 candles (return, range, body, relative volume and, on Binance, the aggressive-buy share) plus the tabular features; one network predicts all four candles and the full hour. |
 
 Hyperparameters are fixed in advance; tuning them on results would be more trials to correct for. About 26 scale-free features (multi-horizon returns, volatility, RSI, MACD, Bollinger, ATR, range position, gap, relative volume, calendar, and a reference market such as SPY or BTC), so several assets can train a single model.
 
-## Market regimes
+On Binance candles, four **order-flow** features are added: the share of the candle's volume that was aggressive buying (taker buys; 0.5 is balance), the same share over the last hour, whether that share is unusual against the last day, and whether the number of trades is unusual.
+
+## Market stages
+
+### Rule-based regimes
 
 Every candle gets one label computed from past data only. News is not read; its footprint in price and volume is.
 
@@ -90,6 +117,23 @@ Every candle gets one label computed from past data only. News is not read; its 
 
 A regime is detected once it has started, never before.
 
+### Stages with probabilities (HMM)
+
+A Gaussian hidden Markov model learns from the data a few hidden states (4 by default), each with its typical volatility and trend, and the probabilities of moving between them. Each candle is observed through the same two quantities the rules use, made scale-free: last-day volatility as a z-score against its past year, and the 30-day return divided by the volatility of that horizon. The result is not a label but probabilities, such as "75% calm, 20% bull, 5% crisis".
+
+- In every walk-forward block the HMM is fitted on the training period only.
+- Each candle gets its **filtered** probability, P(state | data up to that candle), never the smoothed one.
+- States are named by fixed zones of their mean volatility and trend (crisis, volatile, calm, bull, bear, sideways); two states in the same zone share the name and their probabilities add up.
+- A stage only counts when its probability is at least 90%; otherwise the candle is "uncertain" and the general model predicts it.
+
+Implemented in numpy (`updown/hmm.py`): `hmmlearn` has no wheels for recent Pythons and its posteriors are smoothed.
+
+### Per-stage submodels
+
+For every model and every stage, a submodel is trained only on past candles of that stage; the general model (each model trained on all candles) competes too, and it takes over stages with too few candles. Inside each training block the last 20% (purged) is held out: candidates are trained on the earlier 80%, the one with the lowest Brier on that stage's validation candles wins the stage, and winners are retrained on the whole block. The test period never takes part in the choice. The transformer only competes as a general candidate (one per stage and block would take hours).
+
+Out of sample, the per-stage model is compared with the same procedure without stages (the fair comparison), with every single model and the best one picked after the fact (which favours it), and with both baselines; it counts as one more trial in the Holm correction, and the Brier difference gets a paired test with day-clustered errors. Two rankings per stage, what validation picked and how each submodel did out of sample, show whether the choice is stable or the stage is too noisy to trust.
+
 ## Data
 
 | Source | What | Depth |
@@ -97,19 +141,22 @@ A regime is detected once it has started, never before.
 | Yahoo Finance via [`yfinance`](https://github.com/ranaroussi/yfinance) | stocks, ETFs, indices, FX, crypto | 1m: 7 days · 5–30m: 60 days · 1h: 730 days · 1d: full history |
 | Binance public REST API | crypto, real time | as far back as requested (paginated) |
 
-Downloads are cached in `~/.cache/updown` (or `$UPDOWN_CACHE`); Binance updates fetch only new candles. `yfinance` is an unofficial client intended for personal and research use: check Yahoo's terms before anything else. Binance is not available in every country. No market data is shipped with this repository.
+Binance candles also bring the number of trades and the taker-buy volume (order flow). Downloads are cached in `~/.cache/updown` (or `$UPDOWN_CACHE`); Binance updates fetch only new candles, and a cache written by an older version (without those columns) is downloaded again in full instead of being mixed with new candles. `yfinance` is an unofficial client intended for personal and research use: check Yahoo's terms before anything else. Binance is not available in every country. No market data is shipped with this repository.
 
 ## Limitations
 
 - Statistically real is not economically useful: a 53% hit rate on 15-minute candles is small next to trading costs, which this study deliberately ignores.
 - The large-cap stock universe in the comparison is today's large caps (survivorship bias).
 - Two years of crypto data cover a limited set of market conditions; nothing here guarantees the next regime behaves the same.
+- The HMM probability is the model's own belief, not a verified frequency: a hidden state has no ground truth. With smoothed inputs it is often close to 100%, so the 90% rule may filter little; the study reports the share of "uncertain" candles.
+- Per-stage selection is noisy where a stage has few validation candles; the agreement between the validation and out-of-sample rankings says how far to trust it.
 
 ## Project layout
 
 ```
-updown/       data.py · features.py · regimes.py · models.py · transformer.py
-              evaluate.py · candles.py · predict.py · audit.py · __main__.py (CLI)
+updown/       data.py · features.py · regimes.py · hmm.py · models.py · transformer.py
+              evaluate.py · candles.py · stages.py · confidence.py · predict.py · audit.py
+              __main__.py (CLI)
 app.py        Streamlit app
 estudios/     reproducible studies and their results
 tests/        offline test suite (synthetic data, mocked API)
