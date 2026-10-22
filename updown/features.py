@@ -85,7 +85,6 @@ def _add_order_flow(f: pd.DataFrame, bars: pd.DataFrame, interval: str) -> None:
     f["trades_z"] = (logn - logn.rolling(day).mean()) / logn.rolling(day).std()
 
 
-
 def _add_calendar(f: pd.DataFrame, interval: str) -> None:
     idx = f.index
     dow = idx.day_of_week

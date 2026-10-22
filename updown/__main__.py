@@ -63,7 +63,7 @@ def cmd_evaluar(args) -> int:
         live = confidence_curve_live(rep.oos[rep.best])
         cc["acierto_corte_previo"], cc["cobertura_corte_previo"] = live["acierto"], live["cobertura_real"]
         print(f"\nAcierto según confianza de '{rep.best}' (el corte mira solo la probabilidad, nunca el resultado;"
-              " 'corte_previo' lo fija con los bloques anteriores, como en vivo):")
+              " 'corte_previo' lo fija con el bloque anterior, como en vivo):")
         print(cc[["n", "confianza_media", "acierto", "ic95_bajo", "ic95_alto", "acierto_corte_previo",
                   "cobertura_corte_previo"]].round(4).to_string())
     print("\nVEREDICTO:", rep.verdict)
