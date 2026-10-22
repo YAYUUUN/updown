@@ -33,12 +33,18 @@ COLS = ["acierto", "freq_sube", "auc", "p_auc_corregido", "skill_vs_siempre_sube
         "ret_anual_estrategia", "ret_anual_comprar_y_mantener"]
 
 
-def _md(table: pd.DataFrame) -> str:
+def _md(table: pd.DataFrame, index: str = "modelo") -> str:
     """Tabla markdown sin depender de `tabulate`."""
-    head = "| modelo | " + " | ".join(table.columns) + " |"
+    head = f"| {index} | " + " | ".join(map(str, table.columns)) + " |"
     sep = "|---" * (len(table.columns) + 1) + "|"
-    body = ["| " + str(i) + " | " + " | ".join("" if pd.isna(v) else f"{v:.4g}" for v in row) + " |"
-            for i, row in table.iterrows()]
+    def cell(v):
+        if isinstance(v, str):
+            return v
+        if pd.isna(v):
+            return ""
+        return f"{int(v)}" if float(v).is_integer() and abs(v) < 1e12 else f"{v:.4g}"
+
+    body = ["| " + str(i) + " | " + " | ".join(cell(v) for v in row) + " |" for i, row in table.iterrows()]
     return "\n".join([head, sep, *body])
 
 

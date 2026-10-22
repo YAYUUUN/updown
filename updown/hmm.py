@@ -25,11 +25,16 @@ Cómo se evita mirar al futuro:
     después. El paso hacia atrás solo se usa dentro de EM, con datos de entrenamiento.
 
 Los números de estado de un HMM son arbitrarios (cambian de un ajuste a otro),
-así que cada estado se nombra por sus características medias: el menos volátil es
-«calma»; el más volátil, «crisis» si su tendencia es negativa y «volatil» si no;
-los intermedios, «bajista» y «alcista» según su tendencia. La etapa solo se da por
-buena si su probabilidad supera el umbral (90 % por defecto); si no, la vela es
-«incierta».
+así que cada estado se nombra por la zona en la que caen su volatilidad y su
+tendencia medias, con límites fijados de antemano como en las reglas:
+
+  · volatilidad > +0,5 : «crisis» si la tendencia es negativa, «volatil» si no.
+  · volatilidad < -0,5 y sin tendencia clara (|tendencia| < 1): «calma».
+  · el resto, por su tendencia: «alcista» (> +0,5), «bajista» (< -0,5) o «lateral».
+
+Dos estados en la misma zona comparten nombre y su probabilidad se suma: la etapa
+es la zona, no el estado. La etapa solo se da por buena si su probabilidad supera
+el umbral (90 % por defecto); si no, la vela es «incierta».
 
 Ojo: esa probabilidad es la del propio modelo, no una frecuencia comprobada. Un
 estado oculto no tiene verdad con la que contrastarlo; lo que sí se puede medir es
@@ -184,28 +189,25 @@ class GaussianHMM:
         return [alpha[i, :len(s)] for i, s in enumerate(seqs)]
 
     def durations(self) -> np.ndarray:
-        """Duración media de cada estado en velas: 1 / (1 - P(quedarse))."""
-        return 1.0 / (1.0 - np.diag(self.transmat_))
+        """Duración media de cada estado en velas: 1 / (1 - P(quedarse)); inf si nunca se salió de él."""
+        leave = 1.0 - np.diag(self.transmat_)
+        return np.where(leave < 1e-4, np.inf, 1.0 / np.maximum(leave, 1e-12))
 
 
-def name_states(means: np.ndarray) -> list[str]:
-    """Nombre de cada estado según su volatilidad (columna 0) y tendencia (columna 1) medias."""
-    k = len(means)
-    names = [""] * k
-    order = list(np.argsort(means[:, 0], kind="stable"))
-    names[order[0]] = "calma"
-    if k == 1:
-        return names
-    top = order[-1]
-    names[top] = "crisis" if means[top, 1] < 0 else "volatil"
-    middle = sorted(order[1:-1], key=lambda s: means[s, 1])
-    if len(middle) == 1:
-        names[middle[0]] = "alcista" if means[middle[0], 1] > 0 else "bajista"
-    elif middle:
-        names[middle[0]], names[middle[-1]] = "bajista", "alcista"
-        inner = middle[1:-1]
-        for i, s in enumerate(inner):
-            names[s] = "lateral" if len(inner) == 1 else f"lateral_{i + 1}"
+def name_states(means: np.ndarray, level: float = 0.5) -> list[str]:
+    """Nombre de cada estado según la zona de su volatilidad (columna 0) y tendencia (columna 1) medias."""
+    names = []
+    for vol, trend in means[:, :2]:
+        if vol > level:
+            names.append("crisis" if trend < 0 else "volatil")
+        elif vol < -level and abs(trend) < 1:
+            names.append("calma")
+        elif trend > level:
+            names.append("alcista")
+        elif trend < -level:
+            names.append("bajista")
+        else:
+            names.append("lateral")
     return names
 
 
@@ -239,18 +241,26 @@ class StageHMM:
             ok = ~np.isnan(s).any(axis=1)
             if ok.any():                                    # sin el calentamiento inicial (NaN)
                 seqs.append(s[np.argmax(ok):])
+        if sum((~np.isnan(q).any(axis=1)).sum() for q in seqs) < 50 * self.n_states:
+            raise ValueError("Muy pocas velas con observación para ajustar el HMM (hace falta ~1 mes de "
+                             "calentamiento antes del entrenamiento).")
         self.hmm_ = GaussianHMM(self.n_states, seed=self.seed).fit(seqs)
-        self.names_ = name_states(self.hmm_.means_)
+        self.names_ = name_states(self.hmm_.means_)        # uno por estado (puede repetirse)
+        self.stages_ = sorted(set(self.names_))
         return self
 
     def proba(self, rows: pd.DataFrame) -> pd.DataFrame:
+        """Probabilidad filtrada de cada etapa (suma de sus estados), una columna por etapa."""
         X = rows[list(HMM_COLUMNS)].to_numpy(float)
         idxs = _sequences(rows)
         P = np.full((len(rows), self.n_states), np.nan)
         for idx, alpha in zip(idxs, self.hmm_.filter([X[i] for i in idxs])):
             P[idx] = alpha
         P[np.isnan(X).any(axis=1)] = np.nan                # sin observación no hay etapa
-        return pd.DataFrame(P, index=rows.index, columns=self.names_)
+        names = np.array(self.names_)
+        stages = np.column_stack([P[:, names == s].sum(axis=1) for s in self.stages_])
+        stages[np.isnan(P).any(axis=1)] = np.nan
+        return pd.DataFrame(stages, index=rows.index, columns=self.stages_)
 
     def labels(self, rows: pd.DataFrame, proba: pd.DataFrame | None = None) -> pd.Series:
         """Etapa con probabilidad >= umbral; si no, «incierta». NaN si aún no hay observación."""
@@ -260,7 +270,7 @@ class StageHMM:
         filled = np.where(ok[:, None], values, -1.0)
         best, conf = filled.argmax(axis=1), filled.max(axis=1)
         out = np.full(len(P), np.nan, dtype=object)
-        names = np.array(self.names_, dtype=object)
+        names = np.array(list(P.columns), dtype=object)
         out[ok] = np.where(conf[ok] >= self.threshold, names[best[ok]], UNCERTAIN)
         return pd.Series(out, index=P.index, name="etapa_hmm")
 

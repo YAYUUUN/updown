@@ -51,11 +51,22 @@ def test_missing_observations_carry_no_information():
 
 
 def test_state_names_follow_their_characteristics():
-    means = np.array([[1.5, -1.0], [-1.0, 0.1], [0.2, 1.2], [0.3, -1.3]])   # (volatilidad, tendencia)
-    assert name_states(means) == ["crisis", "calma", "alcista", "bajista"]
-    assert name_states(np.array([[2.0, 0.5], [-1.0, 0.0]])) == ["volatil", "calma"]
-    five = np.array([[0.0, 0.0], [1.0, 0.2], [-1.0, 0.0], [0.5, -0.5], [0.4, 0.8]])
-    assert name_states(five) == ["lateral", "volatil", "calma", "bajista", "alcista"]
+    means = np.array([[1.5, -1.0], [-1.0, 0.1], [0.2, 1.2], [0.3, -1.3], [2.0, 0.5], [0.0, 0.2], [-1.0, 1.5]])
+    assert name_states(means) == ["crisis", "calma", "alcista", "bajista", "volatil", "lateral", "alcista"]
+    quiet = np.array([[-1.6, 0.7], [-1.5, 2.2], [-1.7, 0.1], [-1.5, 0.2]])   # nada volátil: ningún «volatil»
+    assert name_states(quiet) == ["calma", "alcista", "calma", "calma"]
+
+
+def test_states_in_the_same_zone_add_up():
+    bars, _ = audit.stage_bars(n=2500, seed=3)
+    obs = hmm_observations(bars)
+    model = StageHMM(n_states=4).fit(obs.iloc[:1500])
+    model.names_ = ["calma", "calma", "crisis", "crisis"]                 # dos estados por zona
+    model.stages_ = ["calma", "crisis"]
+    states = np.vstack(model.hmm_.filter([obs.dropna().to_numpy()]))
+    P = model.proba(obs.dropna())
+    np.testing.assert_allclose(P["calma"], states[:, 0] + states[:, 1])
+    assert set(model.labels(obs.dropna()).dropna()) <= {"calma", "crisis", UNCERTAIN}
 
 
 def test_hmm_stages_use_only_the_past():

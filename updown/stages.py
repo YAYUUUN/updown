@@ -38,7 +38,8 @@ Comparaciones fuera de muestra:
 
 El modelo por etapas cuenta como un intento más en la corrección de Holm (y
 general_validado, otro). La diferencia de Brier con cada rival se contrasta con un
-test pareado (Diebold-Mariano) con error estándar agrupado por día.
+test pareado (Diebold-Mariano) con error estándar agrupado por día, también
+corregido por Holm (hay una prueba por fuente y rival).
 
 Rankings por etapa: qué eligió la validación en cada bloque y cómo quedó cada
 candidato fuera de muestra en las velas de esa etapa. Si coinciden, la elección
@@ -104,6 +105,15 @@ def _stage_names(*labels: np.ndarray) -> list[str]:
     return sorted(seen)
 
 
+def _hmm_labels(train: pd.DataFrame, rows: pd.DataFrame, n_states: int, threshold: float):
+    """Etapas del HMM ajustado con `train` para todas las `rows`; sin datos para ajustarlo, todo NaN."""
+    try:
+        model = StageHMM(n_states, threshold).fit(train)
+    except ValueError:
+        return np.full(len(rows), np.nan, dtype=object), None
+    return model.labels(rows).to_numpy(object), model
+
+
 def evaluate_stages(data: pd.DataFrame, models=STAGE_MODELS, target: str = "up", ret_col: str = "fwd_ret",
                     purge: int | None = None, sources=SOURCES, general_only=DEEP, n_folds: int = 6,
                     min_train_frac: float = 0.4, val_frac: float = 0.2, min_train: int = 1000,
@@ -156,11 +166,11 @@ def evaluate_stages(data: pd.DataFrame, models=STAGE_MODELS, target: str = "up",
         # 1. Etapas: las de la validación salen de un HMM que solo ha visto el ajuste.
         stage_inner, stage_full = dict(fixed_labels), dict(fixed_labels)
         if "hmm" in sources:
-            stage_inner["hmm"] = StageHMM(n_states, threshold).fit(fit).labels(work).to_numpy(object)
-            h_full = StageHMM(n_states, threshold).fit(tr)
-            stage_full["hmm"] = h_full.labels(work).to_numpy(object)
+            stage_inner["hmm"] = _hmm_labels(fit, work, n_states, threshold)[0]
+            stage_full["hmm"], h_full = _hmm_labels(tr, work, n_states, threshold)
             hmm_oos[te["_pos"].to_numpy()] = stage_full["hmm"][te["_pos"].to_numpy()]
-            hmm_rows.append(h_full.describe().rename_axis("estado").reset_index().assign(bloque=i))
+            if h_full is not None:
+                hmm_rows.append(h_full.describe().rename_axis("estado").reset_index().assign(bloque=i))
 
         # 2. Elección en validación.
         y_fit, y_val = fit[target].to_numpy(), val[target].to_numpy()
@@ -193,7 +203,7 @@ def evaluate_stages(data: pd.DataFrame, models=STAGE_MODELS, target: str = "up",
                                     "n_entrenamiento": int(mf.sum()), "n_validacion": n_val})
 
         # 3. Reentrenar con todo el entrenamiento y predecir la prueba.
-        frame = te[[target, ret_col] + keep].rename(columns={target: "up", ret_col: "fwd_ret"}).assign(bloque=i)
+        frame = te[[target, ret_col] + keep].rename(columns={target: "up", ret_col: "fwd_ret"}).assign(fold=i)
         y_te = frame["up"].to_numpy()
         te_general = {m: fit_predict(m, tr, te) for m in general_models}
         for b in BASELINES:
@@ -256,12 +266,12 @@ def _metrics(oos: dict, singles: list[str], staged: list[str], se_h: int) -> pd.
     tried = singles + ["general_validado"] + staged
     base = oos["siempre_sube"]
     base_brier = scores(base, se_h)["brier"]
-    base_fold = ((base["p"] - base["up"]) ** 2).groupby(base["bloque"]).mean()
+    base_fold = ((base["p"] - base["up"]) ** 2).groupby(base["fold"]).mean()
     rows = {}
     for m in names:
         o = oos[m]
         s = scores(o, se_h)
-        fb = ((o["p"] - o["up"]) ** 2).groupby(o["bloque"]).mean()
+        fb = ((o["p"] - o["up"]) ** 2).groupby(o["fold"]).mean()
         s["skill_vs_siempre_sube"] = 1 - s["brier"] / base_brier
         s["bloques_ganados"] = int((fb < base_fold.reindex(fb.index)).sum()) if m != "siempre_sube" else 0
         s["bloques"] = int(len(fb))
@@ -283,13 +293,15 @@ def _comparison(oos: dict, sources, best_single: str) -> pd.DataFrame:
             d = (r["p"].to_numpy() - r["up"].to_numpy()) ** 2 - (e["p"].to_numpy() - e["up"].to_numpy()) ** 2
             se = se_by_day(d, e.index)
             z = d.mean() / se if se and se == se else float("nan")
-            per_fold = pd.Series(d).groupby(e["bloque"].to_numpy()).mean()
+            per_fold = pd.Series(d).groupby(e["fold"].to_numpy()).mean()
             rows.append({"fuente": src, "rival": label, "modelo_rival": rival, "n": len(d),
                          "brier_etapas": _brier(e["p"], e["up"]), "brier_rival": _brier(r["p"], r["up"]),
                          "mejora_brier": float(d.mean()), "z": float(z),
                          "p_valor": float(math.erfc(abs(z) / math.sqrt(2))) if z == z else float("nan"),
                          "bloques_ganados": int((per_fold > 0).sum()), "bloques": int(len(per_fold))})
-    return pd.DataFrame(rows)
+    out = pd.DataFrame(rows)
+    out["p_corregido"] = holm(out["p_valor"])               # varias fuentes y rivales: varios intentos
+    return out
 
 
 def _oos_rank(cand: pd.DataFrame) -> pd.DataFrame:
