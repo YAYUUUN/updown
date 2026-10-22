@@ -6,7 +6,19 @@ from .models import ALL_MODELS, BASELINES, MODELS, make_model
 from .predict import load_dataset, load_pooled, predict_now
 
 __all__ = [
-    "Market", "fetch", "drop_unclosed", "dataset", "build_features", "build_target",
-    "make_model", "MODELS", "BASELINES", "ALL_MODELS", "evaluate", "EvalReport",
-    "load_dataset", "load_pooled", "predict_now",
+    "ALL_MODELS",
+    "BASELINES",
+    "MODELS",
+    "EvalReport",
+    "Market",
+    "build_features",
+    "build_target",
+    "dataset",
+    "drop_unclosed",
+    "evaluate",
+    "fetch",
+    "load_dataset",
+    "load_pooled",
+    "make_model",
+    "predict_now",
 ]

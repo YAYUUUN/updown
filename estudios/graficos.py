@@ -11,8 +11,8 @@ import matplotlib
 import matplotlib.ticker
 
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402
-import pandas as pd  # noqa: E402
+import matplotlib.pyplot as plt
+import pandas as pd
 
 HERE = os.path.dirname(__file__)
 DOCS = os.path.join(HERE, "..", "docs")
@@ -25,14 +25,15 @@ def read_table(md: str, title: str) -> pd.DataFrame:
     """La primera tabla markdown de la sección `## title`."""
     block = md.split(f"## {title}", 1)[1].split("\n## ", 1)[0]
     first = block[block.index("\n|"):].split("\n\n", 1)[0]
-    lines = [l for l in first.splitlines() if l.startswith("|") and not l.startswith("|---")]
-    rows = [[c.strip() for c in l.strip("|").split("|")] for l in lines]
+    lines = [ln for ln in first.splitlines() if ln.startswith("|") and not ln.startswith("|---")]
+    rows = [[c.strip() for c in ln.strip("|").split("|")] for ln in lines]
     df = pd.DataFrame(rows[1:], columns=rows[0]).set_index(rows[0][0])
     return df.apply(pd.to_numeric, errors="coerce")
 
 
 def main() -> None:
-    md = open(os.path.join(HERE, "resultados_velas_regimenes.md"), encoding="utf-8").read()
+    with open(os.path.join(HERE, "resultados_velas_regimenes.md"), encoding="utf-8") as fh:
+        md = fh.read()
     os.makedirs(DOCS, exist_ok=True)
 
     auc = read_table(md, "AUC por vela").drop(index="siempre_sube")
@@ -53,8 +54,8 @@ def main() -> None:
     fig.savefig(os.path.join(DOCS, "auc_per_candle.png"))
 
     vela1 = md.split("## Por régimen: vela_1", 1)[1].split("\n## ", 1)[0]
-    rows = [[c.strip() for c in l.strip("|").split("|")] for l in vela1.splitlines()
-            if l.startswith("|") and not l.startswith("|---")]
+    rows = [[c.strip() for c in ln.strip("|").split("|")] for ln in vela1.splitlines()
+            if ln.startswith("|") and not ln.startswith("|---")]
     t = pd.DataFrame(rows[1:], columns=rows[0])
     t[["regimen", "modelo_"]] = t[t.columns[0]].str.split(" · ", expand=True)
     t["auc"] = pd.to_numeric(t["auc"])
@@ -84,7 +85,8 @@ def confidence_chart(path: str = os.path.join(HERE, "resultados_etapas_confianza
     """Acierto según cobertura (las predicciones más seguras primero), vela 1."""
     if not os.path.exists(path):
         return
-    acc = read_table(open(path, encoding="utf-8").read(), "Acierto según confianza: vela_1").drop(index="velas")
+    with open(path, encoding="utf-8") as fh:
+        acc = read_table(fh.read(), "Acierto según confianza: vela_1").drop(index="velas")
     acc = acc.drop(index=[m for m in acc.index if m.startswith(("por_etapas", "general_validado"))])
     fig, ax = plt.subplots(figsize=(8, 4.2), dpi=150)
     x = range(len(acc.columns))

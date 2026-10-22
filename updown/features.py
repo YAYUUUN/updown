@@ -21,9 +21,9 @@ RETURN_WINDOWS = (1, 2, 3, 5, 10, 20, 60)
 
 def build_features(bars: pd.DataFrame, interval: str,
                    context: dict[str, pd.DataFrame] | None = None) -> pd.DataFrame:
-    c, o, h, l, v = (bars[k] for k in ("close", "open", "high", "low", "volume"))
+    c, o, h, low, v = (bars[k] for k in ("close", "open", "high", "low", "volume"))
     logret = np.log(c).diff()
-    a = atr(h, l, c, 14)
+    a = atr(h, low, c, 14)
     f = pd.DataFrame(index=bars.index)
 
     for n in RETURN_WINDOWS:
@@ -38,7 +38,7 @@ def build_features(bars: pd.DataFrame, interval: str,
     macd = ema(c, 12) - ema(c, 26)
     f["macd_hist"] = (macd - ema(macd, 9)) / c
     f["boll_z"] = (c - c.rolling(20).mean()) / c.rolling(20).std()
-    hi20, lo20 = h.rolling(20).max(), l.rolling(20).min()
+    hi20, lo20 = h.rolling(20).max(), low.rolling(20).min()
     f["range_pos_20"] = (c - lo20) / (hi20 - lo20)
     f["gap"] = np.log(o / c.shift(1))
     f["body_atr"] = (c - o) / a
@@ -73,8 +73,8 @@ def _add_order_flow(f: pd.DataFrame, bars: pd.DataFrame, interval: str) -> None:
     if not set(ORDER_FLOW) <= set(bars.columns):
         return
     step = INTERVAL_SECONDS.get(interval, 86400)
-    hour = int(round(3600 / step))
-    day = max(int(round(86400 / step)), 20)
+    hour = round(3600 / step)
+    day = max(round(86400 / step), 20)
     ratio = taker_ratio(bars)
     f["taker_ratio"] = ratio
     if hour >= 2:
@@ -134,11 +134,11 @@ def sequence_features(bars: pd.DataFrame, seq_len: int) -> pd.DataFrame:
     volumen relativo (z-score sobre 96 barras, recortado) y, si la fuente trae flujo
     de órdenes (Binance), la proporción de compras agresivas centrada en 0. Solo usan el pasado.
     """
-    c, o, h, l, v = (bars[k] for k in ("close", "open", "high", "low", "volume"))
+    c, o, h, low, v = (bars[k] for k in ("close", "open", "high", "low", "volume"))
     logv = np.log1p(v)
     base = {
         "r": np.log(c).diff(),
-        "hl": np.log(h / l),
+        "hl": np.log(h / low),
         "body": np.log(c / o),
         "vz": ((logv - logv.rolling(96, min_periods=20).mean()) / logv.rolling(96, min_periods=20).std()).clip(-5, 5),
     }

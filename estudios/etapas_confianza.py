@@ -27,7 +27,7 @@ import pandas as pd
 
 from estudios.comparativa import _md
 from updown import Market, load_pooled
-from updown.confidence import COVERAGES, confidence_curve, confidence_curve_live
+from updown.confidence import confidence_curve, confidence_curve_live
 from updown.hmm import UNCERTAIN
 from updown.regimes import REGIMES
 from updown.stages import STAGE_MODELS, evaluate_stages
@@ -69,7 +69,7 @@ def confidence_section(rep, target: str) -> list[str]:
 
 def hmm_section(rep) -> list[str]:
     states = rep.hmm_states.assign(duracion_horas=rep.hmm_states["duracion_velas"] * HOURS_PER_BAR)
-    states.index = [f"{b} · {s}" for b, s in zip(states["bloque"], states["estado"])]
+    states.index = [f"{b} · {s}" for b, s in zip(states["bloque"], states["estado"], strict=False)]
     share = rep.stage_share["por_etapas_hmm"].rename("parte de las velas de prueba")
     share = share[share > 0].to_frame()
     cross = rep.hmm_vs_rules.reindex(columns=[r for r in REGIMES if r in rep.hmm_vs_rules.columns])
@@ -96,7 +96,7 @@ def stage_section(rep, target: str) -> list[str]:
     cols = ["n", "acierto", "auc", "p_auc_corregido", "skill_vs_siempre_sube", "bloques_ganados", "bloques",
             "ventaja"]
     comp = rep.comparison.assign(veredicto=rep.comparison.apply(_verdict, axis=1))
-    comp.index = [f"{f} vs {r}" for f, r in zip(comp["fuente"], comp["rival"])]
+    comp.index = [f"{f} vs {r}" for f, r in zip(comp["fuente"], comp["rival"], strict=False)]
     lines = [f"## Modelo por etapas: {target}", "",
              "Fuera de muestra. `general_validado` es el mismo procedimiento sin etapas (un solo modelo elegido en "
              "validación); los p-valores del AUC se corrigen por Holm contando también los modelos por etapas.", "",
@@ -108,14 +108,14 @@ def stage_section(rep, target: str) -> list[str]:
     if rep.agreement.empty:
         return lines
     agree = rep.agreement.copy()
-    agree.index = [f"{f} · {s}" for f, s in zip(agree["fuente"], agree["etapa"])]
+    agree.index = [f"{f} · {s}" for f, s in zip(agree["fuente"], agree["etapa"], strict=False)]
     lines += ["Rankings por etapa: lo que eligió la validación frente a lo que pasó fuera de muestra. "
               "`correlacion_rangos`: correlación entre el orden de los candidatos en validación y en prueba "
               "(estable ≥ 0,5; ruidosa ≤ 0).", "",
               _md(agree[["bloques_con_eleccion", "bloques", "mas_elegido", "veces_elegido", "puesto_fuera_de_muestra",
                          "mejor_fuera_de_muestra", "correlacion_rangos", "estabilidad"]], "fuente · etapa"), ""]
     top = rep.oos_rank[rep.oos_rank["puesto"] <= 5].copy()
-    top.index = [f"{f} · {s} · {c}" for f, s, c in zip(top["fuente"], top["etapa"], top["candidato"])]
+    top.index = [f"{f} · {s} · {c}" for f, s, c in zip(top["fuente"], top["etapa"], top["candidato"], strict=False)]
     lines += ["<details><summary>Los 5 mejores candidatos de cada etapa fuera de muestra</summary>", "",
               _md(top[["puesto", "n", "skill", "auc"]], "fuente · etapa · candidato"), "", "</details>", ""]
     return lines

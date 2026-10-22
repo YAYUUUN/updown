@@ -59,7 +59,7 @@ ENSEMBLE_MEMBERS = ("ridge", "lasso", "random_forest", "gradient_boosting")
 class PriorModel:
     name = "siempre_sube"
 
-    def fit(self, X: pd.DataFrame, y: pd.Series) -> "PriorModel":
+    def fit(self, X: pd.DataFrame, y: pd.Series) -> PriorModel:
         self.p_ = float(np.clip(np.mean(y), 1e-3, 1 - 1e-3))
         return self
 
@@ -70,7 +70,7 @@ class PriorModel:
 class MomentumModel:
     name = "momentum"
 
-    def fit(self, X: pd.DataFrame, y: pd.Series) -> "MomentumModel":
+    def fit(self, X: pd.DataFrame, y: pd.Series) -> MomentumModel:
         last_up = X["ret_1"].to_numpy() > 0
         y = np.asarray(y)
         prior = y.mean()
@@ -97,7 +97,7 @@ class SklearnModel:
         cols = [c for c in self.features if c in X.columns]
         return X[cols] if len(cols) >= 3 else X
 
-    def fit(self, X: pd.DataFrame, y: pd.Series) -> "SklearnModel":
+    def fit(self, X: pd.DataFrame, y: pd.Series) -> SklearnModel:
         X = self._cols(X)
         ya = np.asarray(y).astype(int)
         self.constant_ = float(ya[0]) if len(np.unique(ya)) < 2 else None
@@ -123,7 +123,7 @@ class PlattModel:
         self.name = name
         self.factory = factory
 
-    def fit(self, X: pd.DataFrame, y: pd.Series) -> "PlattModel":
+    def fit(self, X: pd.DataFrame, y: pd.Series) -> PlattModel:
         Xa, ya = X.to_numpy(), np.asarray(y).astype(int)
         cut = int(len(Xa) * 0.8)
         self.platt_ = None
@@ -148,7 +148,7 @@ class EnsembleModel:
     def __init__(self, members=ENSEMBLE_MEMBERS):
         self.members = members
 
-    def fit(self, X: pd.DataFrame, y: pd.Series) -> "EnsembleModel":
+    def fit(self, X: pd.DataFrame, y: pd.Series) -> EnsembleModel:
         self.models_ = [make_model(m).fit(X, y) for m in self.members]
         return self
 

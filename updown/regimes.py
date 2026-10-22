@@ -45,9 +45,9 @@ def regime_inputs(bars: pd.DataFrame) -> pd.DataFrame:
     """Las magnitudes con las que se decide el régimen (útiles para explicar la etiqueta)."""
     c, v = bars["close"], bars["volume"]
     bpd = bars_per_day(bars.index)
-    day = max(int(round(bpd)), 5)            # ~1 día de barras (mínimo 5)
-    month = max(int(round(30 * bpd)), 20)    # ~30 días
-    year = max(int(round(365 * bpd)), 250)   # ~1 año
+    day = max(round(bpd), 5)            # ~1 día de barras (mínimo 5)
+    month = max(round(30 * bpd), 20)    # ~30 días
+    year = max(round(365 * bpd), 250)   # ~1 año
     r = np.log(c).diff()
     vol = r.rolling(day).std()
     out = pd.DataFrame(index=bars.index)

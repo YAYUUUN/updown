@@ -75,7 +75,7 @@ class TransformerModel:
         return Net()
 
     # -- entrenamiento ----------------------------------------------------------
-    def fit(self, X: pd.DataFrame, y: pd.Series) -> "TransformerModel":
+    def fit(self, X: pd.DataFrame, y: pd.Series) -> TransformerModel:
         torch = _torch()
         torch.manual_seed(self.seed)
         np.random.seed(self.seed)
@@ -94,7 +94,8 @@ class TransformerModel:
         seq, tab = self._norm(seq, tab)
 
         cut = int(len(ya) * 0.85)
-        T = lambda a: torch.from_numpy(np.ascontiguousarray(a)).to(self.device_)
+        def T(a):
+            return torch.from_numpy(np.ascontiguousarray(a)).to(self.device_)
         tr = (T(seq[:cut]), T(tab[:cut]), T(ya[:cut]))
         va = (T(seq[cut:]), T(tab[cut:]), T(ya[cut:]))
 

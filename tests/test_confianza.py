@@ -27,7 +27,7 @@ def test_confidence_cut_ignores_outcomes(curve):
 def test_top_slice_is_the_most_confident():
     oos = _oos()
     curve = confidence_curve(oos)
-    k = int(round(0.05 * len(oos)))
+    k = round(0.05 * len(oos))
     top = (oos["p"] - 0.5).abs().nlargest(k)
     assert curve.loc[0.05, "n"] == k
     assert curve.loc[0.05, "umbral"] == pytest.approx(top.min())

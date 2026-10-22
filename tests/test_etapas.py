@@ -1,6 +1,5 @@
 import numpy as np
 import pandas as pd
-import pytest
 
 from updown import audit
 from updown.features import dataset, feature_columns
@@ -79,7 +78,8 @@ def test_hmm_stages_use_only_the_past():
     labels = model.labels(data)
 
     tampered = bars.copy()
-    tampered.loc[tampered.index > t, ["open", "high", "low", "close"]] *= np.linspace(1, 0.4, (bars.index > t).sum())[:, None]
+    fall = np.linspace(1, 0.4, (bars.index > t).sum())[:, None]
+    tampered.loc[tampered.index > t, ["open", "high", "low", "close"]] *= fall
     data2 = dataset(tampered, "1d", regimes=True)
     pd.testing.assert_frame_equal(data[list(HMM_COLUMNS)].loc[:t], data2[list(HMM_COLUMNS)].loc[:t])
     refit = StageHMM().fit(data2[data2.index <= cut])
@@ -140,7 +140,8 @@ def test_stage_choice_ignores_the_test_period():
     tampered.loc[future, "regimen"] = "calma"
     rep2 = evaluate_stages(tampered, **kw)
 
-    first = lambda df: df[df["bloque"] == 0].reset_index(drop=True)
+    def first(df):
+        return df[df["bloque"] == 0].reset_index(drop=True)
     pd.testing.assert_frame_equal(first(rep.choices), first(rep2.choices))
     pd.testing.assert_frame_equal(first(rep.val_rank), first(rep2.val_rank))
     assert not np.allclose(rep.oos["por_etapas_hmm"]["p"], rep2.oos["por_etapas_hmm"]["p"])
@@ -156,7 +157,8 @@ def test_stage_model_learns_a_rule_that_flips_between_stages():
     assert vs["mejora_brier"] > 0 and vs["p_valor"] < 0.01
     assert rep.metrics.loc["por_etapas_etapa_real", "auc"] > rep.metrics.loc["general_validado", "auc"] + 0.03
     assert set(rep.metrics.index) >= {"siempre_sube", "momentum", "ridge", "general_validado"}
-    assert rep.metrics.loc["por_etapas_etapa_real", "p_auc_corregido"] >= rep.metrics.loc["por_etapas_etapa_real", "p_auc"]
+    row = rep.metrics.loc["por_etapas_etapa_real"]
+    assert row["p_auc_corregido"] >= row["p_auc"]
 
 
 def test_small_stages_fall_back_to_the_general_model():

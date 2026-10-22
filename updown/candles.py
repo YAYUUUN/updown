@@ -56,7 +56,7 @@ def _multi_transformer(data: pd.DataFrame, targets, n_folds: int, min_train_frac
         te = labeled[labeled.index.isin(test_t)]
         P = make_model("transformer").fit(tr[cols], tr[cols_y]).proba(te[cols])
         for j, (name, ycol, rcol, _) in enumerate(targets):
-            out = te[[ycol, rcol] + keep].rename(columns={ycol: "up", rcol: "fwd_ret"})
+            out = te[[ycol, rcol, *keep]].rename(columns={ycol: "up", rcol: "fwd_ret"})
             out["p"] = np.clip(P[:, j], 1e-4, 1 - 1e-4)
             out["fold"] = i
             parts[name].append(out)
@@ -90,7 +90,7 @@ def evaluate_candles(data: pd.DataFrame, models=("ridge", "random_forest", "tran
             fb = ((o["p"] - o["up"]) ** 2).groupby(o["fold"]).mean()
             s["skill_vs_siempre_sube"] = 1 - s["brier"] / scores(base, se_h)["brier"]
             s["bloques_ganados"] = int((fb < base_fold.reindex(fb.index)).sum()) if m != "siempre_sube" else 0
-            s["bloques"] = int(len(fb))
+            s["bloques"] = len(fb)
             block[m] = s
         t = pd.DataFrame(block).T
         t["p_auc_corregido"] = holm(t.loc[tried, "p_auc"]).reindex(t.index)

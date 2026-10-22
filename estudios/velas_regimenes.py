@@ -17,7 +17,6 @@ import pandas as pd
 from estudios.comparativa import _md
 from updown import Market, load_pooled
 from updown.candles import by_regime, evaluate_candles
-from updown.regimes import detect_regimes, regime_summary
 
 warnings.filterwarnings("ignore")
 

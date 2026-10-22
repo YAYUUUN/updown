@@ -203,7 +203,7 @@ def evaluate_stages(data: pd.DataFrame, models=STAGE_MODELS, target: str = "up",
                                     "n_entrenamiento": int(mf.sum()), "n_validacion": n_val})
 
         # 3. Reentrenar con todo el entrenamiento y predecir la prueba.
-        frame = te[[target, ret_col] + keep].rename(columns={target: "up", ret_col: "fwd_ret"}).assign(fold=i)
+        frame = te[[target, ret_col, *keep]].rename(columns={target: "up", ret_col: "fwd_ret"}).assign(fold=i)
         y_te = frame["up"].to_numpy()
         te_general = {m: fit_predict(m, tr, te) for m in general_models}
         for b in BASELINES:
@@ -263,7 +263,7 @@ def evaluate_stages(data: pd.DataFrame, models=STAGE_MODELS, target: str = "up",
 
 def _metrics(oos: dict, singles: list[str], staged: list[str], se_h: int) -> pd.DataFrame:
     names = list(BASELINES) + singles + ["general_validado"] + staged
-    tried = singles + ["general_validado"] + staged
+    tried = [*singles, "general_validado", *staged]
     base = oos["siempre_sube"]
     base_brier = scores(base, se_h)["brier"]
     base_fold = ((base["p"] - base["up"]) ** 2).groupby(base["fold"]).mean()
@@ -274,7 +274,7 @@ def _metrics(oos: dict, singles: list[str], staged: list[str], se_h: int) -> pd.
         fb = ((o["p"] - o["up"]) ** 2).groupby(o["fold"]).mean()
         s["skill_vs_siempre_sube"] = 1 - s["brier"] / base_brier
         s["bloques_ganados"] = int((fb < base_fold.reindex(fb.index)).sum()) if m != "siempre_sube" else 0
-        s["bloques"] = int(len(fb))
+        s["bloques"] = len(fb)
         rows[m] = s
     t = pd.DataFrame.from_dict(rows, orient="index")
     t["p_auc_corregido"] = holm(t.loc[tried, "p_auc"]).reindex(t.index)
@@ -292,13 +292,13 @@ def _comparison(oos: dict, sources, best_single: str) -> pd.DataFrame:
             r = oos[rival]
             d = (r["p"].to_numpy() - r["up"].to_numpy()) ** 2 - (e["p"].to_numpy() - e["up"].to_numpy()) ** 2
             se = se_by_day(d, e.index)
-            z = d.mean() / se if se and se == se else float("nan")
+            z = d.mean() / se if se and not math.isnan(se) else float("nan")
             per_fold = pd.Series(d).groupby(e["fold"].to_numpy()).mean()
             rows.append({"fuente": src, "rival": label, "modelo_rival": rival, "n": len(d),
                          "brier_etapas": _brier(e["p"], e["up"]), "brier_rival": _brier(r["p"], r["up"]),
                          "mejora_brier": float(d.mean()), "z": float(z),
-                         "p_valor": float(math.erfc(abs(z) / math.sqrt(2))) if z == z else float("nan"),
-                         "bloques_ganados": int((per_fold > 0).sum()), "bloques": int(len(per_fold))})
+                         "p_valor": float(math.erfc(abs(z) / math.sqrt(2))) if not math.isnan(z) else float("nan"),
+                         "bloques_ganados": int((per_fold > 0).sum()), "bloques": len(per_fold)})
     out = pd.DataFrame(rows)
     out["p_corregido"] = holm(out["p_valor"])               # varias fuentes y rivales: varios intentos
     return out
@@ -339,6 +339,6 @@ def _agreement(choices: pd.DataFrame, val_rank: pd.DataFrame, oos_rank: pd.DataF
                      "mas_elegido": top, "veces_elegido": int((chosen == top).sum()) if top else 0,
                      "puesto_fuera_de_muestra": rank, "mejor_fuera_de_muestra": o["skill"].idxmax() if len(o) else None,
                      "correlacion_rangos": rho,
-                     "estabilidad": "sin datos" if rho != rho else
+                     "estabilidad": "sin datos" if pd.isna(rho) else
                      "estable" if rho >= 0.5 else "dudosa" if rho > 0 else "ruidosa"})
     return pd.DataFrame(rows)

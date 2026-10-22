@@ -20,6 +20,7 @@ Cómo se mide (y por qué):
 """
 from __future__ import annotations
 
+import itertools
 import math
 from dataclasses import dataclass, field
 
@@ -49,7 +50,7 @@ def time_folds(times: pd.Index, n_folds: int, min_train_frac: float, purge: int)
     n = len(uniq)
     start = int(n * min_train_frac)
     edges = np.linspace(start, n, n_folds + 1).astype(int)
-    for a, b in zip(edges[:-1], edges[1:]):
+    for a, b in itertools.pairwise(edges):
         train_end = a - purge
         if train_end < 50 or b <= a:
             continue
@@ -73,7 +74,7 @@ def walk_forward(data: pd.DataFrame, model_name: str, n_folds: int = 6,
         tr = labeled[labeled.index.isin(train_t)]
         te = labeled[labeled.index.isin(test_t)]
         model = make_model(model_name).fit(tr[cols], tr[target])
-        out = te[[target, ret_col] + keep].rename(columns={target: "up", ret_col: "fwd_ret"})
+        out = te[[target, ret_col, *keep]].rename(columns={target: "up", ret_col: "fwd_ret"})
         out["p"] = np.clip(model.proba(te[cols]), 1e-4, 1 - 1e-4)
         out["fold"] = i
         parts.append(out)
@@ -93,14 +94,14 @@ def scores(oos: pd.DataFrame, horizon: int = 1) -> dict:
     n1, n0 = int(y.sum()), int(len(y) - y.sum())
     auc = roc_auc_score(y, p) if n1 and n0 else float("nan")
     se0 = math.sqrt(horizon * (n1 + n0 + 1) / (12.0 * n1 * n0)) if n1 and n0 else float("nan")
-    z = (auc - 0.5) / se0 if se0 == se0 else float("nan")
+    z = (auc - 0.5) / se0 if not math.isnan(se0) else float("nan")
     return {
         "n": len(y),
         "acierto": float(((p > 0.5) == (y == 1)).mean()),
         "brier": float(np.mean((p - y) ** 2)),
         "logloss": float(-np.mean(y * np.log(p) + (1 - y) * np.log(1 - p))),
         "auc": float(auc),
-        "p_auc": float(0.5 * math.erfc(z / math.sqrt(2))) if z == z else float("nan"),
+        "p_auc": float(0.5 * math.erfc(z / math.sqrt(2))) if not math.isnan(z) else float("nan"),
         "freq_sube": float(y.mean()),
     }
 
@@ -129,8 +130,8 @@ def holm(p: pd.Series) -> pd.Series:
     adj, running = {}, 0.0
     for i, name in enumerate(order):
         val = p[name]
-        running = max(running, min(1.0, (m - i) * val)) if val == val else running
-        adj[name] = running if val == val else float("nan")
+        running = max(running, min(1.0, (m - i) * val)) if pd.notna(val) else running
+        adj[name] = running if pd.notna(val) else float("nan")
     return pd.Series(adj).reindex(p.index)
 
 
@@ -180,7 +181,7 @@ def evaluate(data: pd.DataFrame, models=MODELS, n_folds: int = 6, cost_bps: floa
         fold_rows[m] = fb
         s["skill_vs_siempre_sube"] = 1 - s["brier"] / scores(base, horizon)["brier"]
         s["bloques_ganados"] = int((fb < base_fold_brier).sum()) if m != "siempre_sube" else 0
-        s["bloques"] = int(len(fb))
+        s["bloques"] = len(fb)
         strat = simulate(oos[m], horizon, cost_bps, band)
         equity[m] = strat.cumsum()
         s["ret_anual_estrategia"] = float(np.expm1(strat.mean() * bpy)) if len(strat) else float("nan")

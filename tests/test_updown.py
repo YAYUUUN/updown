@@ -5,9 +5,8 @@ import pytest
 from updown import audit
 from updown.data import drop_unclosed, parse_binance_klines
 from updown.evaluate import holm, time_folds, walk_forward
-from updown.features import build_features, build_target, dataset
-from updown.features import model_columns, sequence_features
-from updown.models import BASELINES, DEEP, MODELS, make_model
+from updown.features import build_features, build_target, dataset, model_columns, sequence_features
+from updown.models import BASELINES, MODELS, make_model
 
 
 @pytest.fixture(scope="module")
@@ -243,6 +242,7 @@ def test_binance_cache_only_downloads_new_bars(tmp_path, monkeypatch):
 def test_old_cache_without_version_is_downloaded_again(tmp_path, monkeypatch):
     import pickle
     import time
+
     from updown.data import Market, _cache_path, fetch
     monkeypatch.setenv("UPDOWN_CACHE", str(tmp_path))
     m = Market("binance", "BTCUSDT", "1h")

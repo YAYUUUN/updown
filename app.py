@@ -22,7 +22,9 @@ warnings.filterwarnings("ignore")
 st.set_page_config(page_title="updown", page_icon="📈", layout="wide")
 
 HAS_TORCH = importlib.util.find_spec("torch") is not None
-MODEL_CHOICES = ["ridge", "lasso", "random_forest", "gradient_boosting", "extra_trees"] + (["transformer"] if HAS_TORCH else [])
+MODEL_CHOICES = ["ridge", "lasso", "random_forest", "gradient_boosting", "extra_trees"]
+if HAS_TORCH:
+    MODEL_CHOICES.append("transformer")
 TARGET_NAMES = {"vela_1": "1.ª vela", "vela_2": "2.ª vela", "vela_3": "3.ª vela", "vela_4": "4.ª vela",
                 "hora": "Hora completa"}
 TARGET_COLUMNS = {**{f"vela_{k}": (f"up_v{k}", f"fwd_v{k}", k) for k in range(1, 5)}, "hora": ("up", "fwd_ret", 4)}
@@ -31,7 +33,7 @@ SHORT = {"shock": "Noticia", "crisis": "Crisis", "calma": "Calma", "alcista": "A
 REGIME_ICONS = {"shock": "⚡", "crisis": "🔥", "calma": "😴", "alcista": "📈", "bajista": "📉", "lateral": "↔️"}
 STAGE_ICONS = {**REGIME_ICONS, "volatil": "🌪️", UNCERTAIN: "❔"}
 STAGE_NAMES = {**REGIME_LABELS, **STATE_LABELS}
-STAGE_ORDER = list(REGIMES) + ["volatil"]
+STAGE_ORDER = [*list(REGIMES), "volatil"]
 SOURCE_NAMES = {"reglas": "Reglas fijas", "hmm": "HMM (con probabilidad)"}
 
 
@@ -96,10 +98,11 @@ with st.sidebar:
     source = st.radio("Fuente", ["binance", "yahoo"], horizontal=True)
     default = "BTCUSDT,ETHUSDT,SOLUSDT" if source == "binance" else "SPY,QQQ,IWM"
     symbols = tuple(s.strip() for s in st.text_input("Símbolos (separados por comas)", default).split(",") if s.strip())
-    interval = st.selectbox("Vela", ["15m", "5m", "1h"] if source == "binance" else ["15m", "5m", "1h"], index=0)
+    interval = st.selectbox("Vela", ["15m", "5m", "1h"], index=0)
     bars = st.slider("Barras por símbolo (Binance)", 5_000, 70_000, 20_000, step=5_000,
                      help="Yahoo solo da 60 días de velas de 15 min, sin elegir.")
-    models = tuple(st.multiselect("Modelos", MODEL_CHOICES, default=[m for m in ("ridge", "random_forest", "transformer")
+    preferred = ("ridge", "random_forest", "transformer")
+    models = tuple(st.multiselect("Modelos", MODEL_CHOICES, default=[m for m in preferred
                                                                     if m in MODEL_CHOICES]))
     stages_on = st.checkbox("Ranking por etapa (más lento)", value=True,
                             help="Entrena un submodelo por modelo y etapa en cada bloque. El transformer solo "
@@ -120,14 +123,14 @@ params = st.session_state["params"]
 with st.spinner("Descargando datos y evaluando bloque a bloque…"):
     try:
         res = run(*params)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001  (cualquier fallo se enseña en la interfaz)
         st.error(f"No se pudo evaluar: {exc}")
         st.stop()
 
 # --- etapa actual ---------------------------------------------------------------
 st.subheader("¿En qué etapa está cada mercado ahora?")
 cols = st.columns(max(len(res["ahora"]), 1))
-for col, (sym, reg) in zip(cols, res["ahora"].items()):
+for col, (sym, reg) in zip(cols, res["ahora"].items(), strict=False):
     col.metric(sym, f"{REGIME_ICONS.get(reg, '')} {SHORT.get(reg, 'sin datos')}",
                help=f"{REGIME_LABELS.get(reg, '')} (reglas). Última vela cerrada: "
                     f"{pd.Timestamp(res['ultima_barra'][sym]).tz_convert('UTC'):%Y-%m-%d %H:%M} UTC")
@@ -160,7 +163,8 @@ tab_candles, tab_stages, tab_conf = st.tabs(["Por vela", "Ranking por etapa", "C
 # --- por vela y escenario (reglas) ----------------------------------------------------
 with tab_candles:
     choice = st.segmented_control("Escenario", ["todos", *REGIMES], default="todos", key="escenario",
-                                  format_func=lambda r: "Todos" if r == "todos" else f"{REGIME_ICONS[r]} {REGIME_LABELS[r]}")
+                                  format_func=lambda r: "Todos" if r == "todos"
+                                  else f"{REGIME_ICONS[r]} {REGIME_LABELS[r]}")
     choice = choice or "todos"
     if choice == "todos":
         st.markdown(f"{res['filas']:,} filas · fuera de muestra {res['meta']['desde'][:10]} → "
@@ -172,7 +176,8 @@ with tab_candles:
         chart = alt.Chart(auc_long).mark_line(point=True).encode(
             x=alt.X("objetivo:N", sort=list(auc.columns), title=None, axis=alt.Axis(labelAngle=0)),
             y=alt.Y("auc:Q", scale=alt.Scale(zero=False), title="AUC fuera de muestra"),
-            color=alt.Color("modelo:N", title="Modelo"), tooltip=["modelo", "objetivo", alt.Tooltip("auc:Q", format=".4f")])
+            color=alt.Color("modelo:N", title="Modelo"),
+            tooltip=["modelo", "objetivo", alt.Tooltip("auc:Q", format=".4f")])
         chance = alt.Chart(pd.DataFrame({"y": [0.5]})).mark_rule(strokeDash=[4, 4], color="gray").encode(y="y:Q")
         st.altair_chart(chart + chance, width="stretch")
         c1, c2 = st.columns(2)
@@ -191,8 +196,10 @@ with tab_candles:
         else:
             share = float(res["tiempo"].get(choice, 0.0))
             st.markdown(f"**{REGIME_ICONS[choice]} {REGIME_LABELS[choice]}**: {share:.1%} del tiempo · "
-                        f"{int(sub['n'].iloc[0]):,} velas evaluadas · sube el {sub['freq_sube'].iloc[0]:.1%} de las veces.")
-            view = sub.set_index("modelo")[["acierto", "auc", "skill_vs_siempre_sube"]].sort_values("auc", ascending=False)
+                        f"{int(sub['n'].iloc[0]):,} velas evaluadas · "
+                        f"sube el {sub['freq_sube'].iloc[0]:.1%} de las veces.")
+            view = sub.set_index("modelo")[["acierto", "auc", "skill_vs_siempre_sube"]]
+            view = view.sort_values("auc", ascending=False)
             st.dataframe(view.style.format({"acierto": "{:.1%}", "auc": "{:.3f}", "skill_vs_siempre_sube": "{:+.4f}"}),
                          width="stretch")
             st.caption(f"En este escenario ordena mejor **{view.index[0]}**. Por escenario no se corrige por número de "
@@ -207,7 +214,7 @@ def show_stages(params: tuple) -> None:
     with st.spinner("Entrenando un submodelo por modelo y etapa en cada bloque…"):
         try:
             sr = run_stages(*params, target)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001  (cualquier fallo se enseña en la interfaz)
             st.error(f"No se pudo evaluar por etapas: {exc}")
             return
     m, comp = sr["metrics"], sr["comparison"]
@@ -239,7 +246,7 @@ def show_stages(params: tuple) -> None:
         if not ag.empty:
             rho = ag["correlacion_rangos"].iloc[0]
             st.markdown(f"**¿Coinciden validación y prueba?** {ag['estabilidad'].iloc[0].capitalize()}"
-                        + (f" (correlación de rangos {rho:.2f})" if rho == rho else "")
+                        + (f" (correlación de rangos {rho:.2f})" if pd.notna(rho) else "")
                         + ". Si no coinciden, la etapa es demasiado ruidosa para fiarse de la elección.")
         rank = sr["oos_rank"]
         rank = rank[(rank["fuente"] == src) & (rank["etapa"] == stage)].set_index("candidato")
@@ -292,7 +299,9 @@ with tab_conf:
     st.caption("Se ordenan las predicciones por lo lejos que están del 50 % y se mide el acierto de las más "
                "seguras. El corte mira solo la probabilidad, nunca si acertó. La banda es el IC 95 % del modelo "
                "elegido, agrupando por día. `corte_previo`: el umbral se fija con el bloque anterior, como habría "
-               "que hacerlo en vivo; si su cobertura se aleja de la pedida, la confianza del modelo cambia con el tiempo.")
+               "que hacerlo en vivo; si su cobertura se aleja de la pedida, la confianza del modelo "
+               "cambia con el tiempo.")
 
 st.divider()
-st.caption("Datos: Binance (API pública) y Yahoo Finance. Solo velas cerradas. Nada de esto garantiza resultados futuros.")
+st.caption("Datos: Binance (API pública) y Yahoo Finance. Solo velas cerradas. "
+           "Nada de esto garantiza resultados futuros.")

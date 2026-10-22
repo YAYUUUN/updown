@@ -30,6 +30,8 @@ estrecharía el intervalo.
 """
 from __future__ import annotations
 
+import itertools
+
 import numpy as np
 import pandas as pd
 
@@ -72,7 +74,7 @@ def confidence_curve(oos: pd.DataFrame, coverages=COVERAGES) -> pd.DataFrame:
     order = np.argsort(-conf, kind="stable")
     rows = []
     for c in coverages:
-        k = max(1, int(round(c * len(oos))))
+        k = max(1, round(c * len(oos)))
         rows.append({"cobertura": c, "umbral": float(conf[order[k - 1]]), **_summary(oos.iloc[order[:k]])})
     return pd.DataFrame(rows).set_index("cobertura")
 
@@ -90,7 +92,7 @@ def confidence_curve_live(oos: pd.DataFrame, coverages=COVERAGES) -> pd.DataFram
     rows = []
     for c in coverages:
         parts, thresholds = [], []
-        for prev, f in zip(folds[:-1], folds[1:]):
+        for prev, f in itertools.pairwise(folds):
             past = conf[oos["fold"] == prev].to_numpy()
             thr = 0.0 if c >= 1 else float(np.quantile(past, 1 - c))
             now = oos["fold"] == f

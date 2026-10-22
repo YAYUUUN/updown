@@ -64,8 +64,8 @@ def hmm_observations(bars: pd.DataFrame, inputs: pd.DataFrame | None = None) -> 
     """Observaciones del HMM para cada vela, calculadas solo con el pasado."""
     x = regime_inputs(bars) if inputs is None else inputs
     bpd = bars_per_day(bars.index)
-    month = max(int(round(30 * bpd)), 20)
-    year = max(int(round(365 * bpd)), 250)
+    month = max(round(30 * bpd), 20)
+    year = max(round(365 * bpd), 250)
     logvol = np.log(x["vol"].where(x["vol"] > 0))
     mu = logvol.rolling(year, min_periods=month).mean().shift(1)
     sd = logvol.rolling(year, min_periods=month).std().shift(1)
@@ -143,9 +143,9 @@ class GaussianHMM:
         np.fill_diagonal(self.transmat_, 0.95)
         self.startprob_ = np.full(K, 1.0 / K)
 
-    def fit(self, seqs: list[np.ndarray]) -> "GaussianHMM":
+    def fit(self, seqs: list[np.ndarray]) -> GaussianHMM:
         X = self._pad([np.asarray(s, dtype=float) for s in seqs])
-        S, T, D = X.shape
+        _S, T, D = X.shape
         K = self.n_states
         lengths = np.array([len(s) for s in seqs])
         real = np.arange(T)[None, :] < lengths[:, None]             # (S, T): paso real, no relleno
@@ -233,7 +233,7 @@ class StageHMM:
     def __init__(self, n_states: int = 4, threshold: float = 0.9, seed: int = 0):
         self.n_states, self.threshold, self.seed = n_states, threshold, seed
 
-    def fit(self, rows: pd.DataFrame) -> "StageHMM":
+    def fit(self, rows: pd.DataFrame) -> StageHMM:
         X = rows[list(HMM_COLUMNS)].to_numpy(float)
         seqs = []
         for idx in _sequences(rows):
@@ -254,7 +254,7 @@ class StageHMM:
         X = rows[list(HMM_COLUMNS)].to_numpy(float)
         idxs = _sequences(rows)
         P = np.full((len(rows), self.n_states), np.nan)
-        for idx, alpha in zip(idxs, self.hmm_.filter([X[i] for i in idxs])):
+        for idx, alpha in zip(idxs, self.hmm_.filter([X[i] for i in idxs]), strict=False):
             P[idx] = alpha
         P[np.isnan(X).any(axis=1)] = np.nan                # sin observación no hay etapa
         names = np.array(self.names_)

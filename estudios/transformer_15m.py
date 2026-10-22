@@ -41,7 +41,8 @@ def main() -> None:
     print(rep.folds.round(5).to_string())
     print("\nVEREDICTO:", rep.verdict)
     out = ["# Transformer vs. clásicos: P(sube en 1 hora), barras de 15 min", "",
-           f"Generado {pd.Timestamp.now(tz='UTC'):%Y-%m-%d %H:%M} UTC. {', '.join(SYMBOLS)} agrupados, {len(data)} filas; "
+           f"Generado {pd.Timestamp.now(tz='UTC'):%Y-%m-%d %H:%M} UTC. "
+           f"{', '.join(SYMBOLS)} agrupados, {len(data)} filas; "
            f"fuera de muestra de {rep.meta['desde'][:10]} a {rep.meta['hasta'][:10]}. Horizonte {HORIZON} barras, "
            f"ventana {SEQ_LEN} barras, 6 bloques walk-forward, Holm sobre {len(MODELS)} modelos, p-valores con "
            f"n efectivo = n/{HORIZON} por el solape de objetivos.", "",
