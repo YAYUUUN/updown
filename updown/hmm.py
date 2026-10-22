@@ -294,3 +294,22 @@ def agreement(hmm_labels: pd.Series, rule_labels: pd.Series) -> float:
     both = pd.DataFrame({"hmm": hmm_labels, "reglas": rule_labels}).dropna()
     both = both[both["hmm"] != UNCERTAIN]
     return float((both["hmm"] == both["reglas"]).mean()) if len(both) else float("nan")
+
+
+def current_stages(data: pd.DataFrame, n_states: int = 4, threshold: float = 0.9) -> pd.DataFrame:
+    """Etapa de cada activo en su última vela, con la probabilidad de cada etapa.
+
+    El HMM se ajusta con todo el histórico y se filtra hasta la última vela. Es una
+    descripción del momento, no una señal: la probabilidad es la del propio modelo.
+    """
+    model = StageHMM(n_states, threshold).fit(data)
+    P = model.proba(data)
+    labels = model.labels(data, P)
+    sym = data["symbol"].to_numpy() if "symbol" in data else np.full(len(data), "")
+    times = data.index.to_numpy()
+    rows = {}
+    for s in pd.unique(sym):
+        pos = np.flatnonzero(sym == s)
+        last = pos[np.argmax(times[pos])]
+        rows[s] = {**P.iloc[last].to_dict(), "etapa": labels.iloc[last], "vela": data.index[last]}
+    return pd.DataFrame.from_dict(rows, orient="index")

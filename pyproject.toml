@@ -20,7 +20,7 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-app = ["streamlit>=1.40"]
+app = ["streamlit>=1.50"]
 deep = ["torch>=2.2"]
 dev = ["pytest", "matplotlib"]
 

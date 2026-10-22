@@ -166,3 +166,15 @@ def test_small_stages_fall_back_to_the_general_model():
     rep = evaluate_stages(data, ("ridge",), sources=("reglas",), n_folds=3, min_train=10 ** 9)
     assert (rep.choices["motivo"] != "validación").all()
     np.testing.assert_allclose(rep.oos["por_etapas_reglas"]["p"], rep.oos["general_validado"]["p"])
+
+
+def test_current_stage_is_the_last_candle_of_each_symbol():
+    from updown.hmm import current_stages
+    a, _ = audit.stage_bars(n=1500, seed=4)
+    b, _ = audit.stage_bars(n=1400, seed=5)
+    pooled = pd.concat([hmm_observations(a).assign(symbol="A"), hmm_observations(b).assign(symbol="B")]).sort_index()
+    now = current_stages(pooled)
+    assert set(now.index) == {"A", "B"}
+    assert now.loc["A", "vela"] == a.index[-1] and now.loc["B", "vela"] == b.index[-1]
+    probs = now.drop(columns=["etapa", "vela"]).astype(float)
+    assert np.allclose(probs.sum(axis=1), 1.0)

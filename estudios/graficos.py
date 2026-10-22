@@ -1,4 +1,5 @@
-"""Gráficos del README a partir de estudios/resultados_velas_regimenes.md.
+"""Gráficos del README a partir de estudios/resultados_velas_regimenes.md y, si existe,
+estudios/resultados_etapas_confianza.md.
 
     python -m estudios.graficos
 """
@@ -7,6 +8,7 @@ from __future__ import annotations
 import os
 
 import matplotlib
+import matplotlib.ticker
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
@@ -15,12 +17,15 @@ import pandas as pd  # noqa: E402
 HERE = os.path.dirname(__file__)
 DOCS = os.path.join(HERE, "..", "docs")
 COLORS = {"random_forest": "#1f6f8b", "gradient_boosting": "#2a9d8f", "transformer": "#e76f51",
-          "ridge": "#8d99ae", "momentum": "#b5b5b5", "siempre_sube": "#d9d9d9"}
+          "ridge": "#8d99ae", "momentum": "#b5b5b5", "siempre_sube": "#d9d9d9", "lasso": "#6d597a",
+          "knn": "#c9a227"}
 
 
 def read_table(md: str, title: str) -> pd.DataFrame:
+    """La primera tabla markdown de la sección `## title`."""
     block = md.split(f"## {title}", 1)[1].split("\n## ", 1)[0]
-    lines = [l for l in block.splitlines() if l.startswith("|") and not l.startswith("|---")]
+    first = block[block.index("\n|"):].split("\n\n", 1)[0]
+    lines = [l for l in first.splitlines() if l.startswith("|") and not l.startswith("|---")]
     rows = [[c.strip() for c in l.strip("|").split("|")] for l in lines]
     df = pd.DataFrame(rows[1:], columns=rows[0]).set_index(rows[0][0])
     return df.apply(pd.to_numeric, errors="coerce")
@@ -72,6 +77,31 @@ def main() -> None:
     fig.tight_layout()
     fig.savefig(os.path.join(DOCS, "auc_by_regime.png"))
     print("docs/auc_per_candle.png, docs/auc_by_regime.png")
+    confidence_chart()
+
+
+def confidence_chart(path: str = os.path.join(HERE, "resultados_etapas_confianza.md")) -> None:
+    """Acierto según cobertura (las predicciones más seguras primero), vela 1."""
+    if not os.path.exists(path):
+        return
+    acc = read_table(open(path, encoding="utf-8").read(), "Acierto según confianza: vela_1").drop(index="velas")
+    acc = acc.drop(index=[m for m in acc.index if m.startswith(("por_etapas", "general_validado"))])
+    fig, ax = plt.subplots(figsize=(8, 4.2), dpi=150)
+    x = range(len(acc.columns))
+    for name, row in acc.iterrows():
+        ax.plot(list(x), row.values, marker="o", lw=2 if name in ("random_forest", "transformer") else 1.2,
+                color=COLORS.get(name, "#333"), label=name)
+    ax.axhline(0.5, color="#999", ls="--", lw=1)
+    ax.set_xticks(list(x), [f"{c}" for c in acc.columns])
+    ax.set_xlabel("Share of candles the model dares to predict (most confident first)")
+    ax.set_ylabel("Out-of-sample hit rate")
+    ax.yaxis.set_major_formatter(matplotlib.ticker.PercentFormatter(1.0))
+    ax.set_title("Does the model hit more when it is more confident? (next 15-min candle)", fontsize=10)
+    ax.legend(fontsize=8, frameon=False, ncol=6, loc="upper center", bbox_to_anchor=(0.5, -0.2))
+    ax.spines[["top", "right"]].set_visible(False)
+    fig.tight_layout()
+    fig.savefig(os.path.join(DOCS, "confidence_curve.png"))
+    print("docs/confidence_curve.png")
 
 
 if __name__ == "__main__":
