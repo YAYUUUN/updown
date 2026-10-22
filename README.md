@@ -1,5 +1,7 @@
 # updown
 
+[![tests](https://github.com/YAYUUUN/updown/actions/workflows/ci.yml/badge.svg)](https://github.com/YAYUUUN/updown/actions/workflows/ci.yml) ![python](https://img.shields.io/badge/python-3.10%2B-blue) [![license: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE) [![release](https://img.shields.io/github/v/release/YAYUUUN/updown)](https://github.com/YAYUUUN/updown/releases)
+
 **Will the next candle close higher?** `updown` estimates that probability with 13 classical models and a transformer, using free public market data, and puts an honest out-of-sample track record next to every number.
 
 Most "price prediction" projects report a nice backtest. This one is built the other way round: first an evaluator that is hard to fool (and is tested to catch its own mistakes), then the models. In liquid markets the usual answer is "no demonstrated edge", and the tool says so.
@@ -59,25 +61,27 @@ git clone https://github.com/YAYUUUN/updown && cd updown
 python -m venv .venv && .venv/Scripts/activate        # Linux/macOS: source .venv/bin/activate
 pip install -e ".[app,dev]"                             # add ,deep for the transformer (PyTorch)
 python -m pytest -q
+ruff check .
 ```
 
 For a CUDA build of PyTorch, follow [pytorch.org](https://pytorch.org/get-started/locally/) (e.g. `--index-url https://download.pytorch.org/whl/cu128`).
 
 ## Use
 
-The command names are in Spanish:
+Every command and option has an English and a Spanish name (`evaluate` = `evaluar`, `--interval` = `--intervalo`...):
 
 ```bash
-updown auditoria                                            # check the evaluator on synthetic data
-updown evaluar SPY --intervalo 1d                           # 13 models, walk-forward
-updown evaluar BTCUSDT,ETHUSDT --fuente binance --intervalo 15m --horizonte 4
+updown audit                                                # check the evaluator on synthetic data
+updown evaluate SPY --interval 1d                           # 13 models, walk-forward
+updown evaluate BTCUSDT,ETHUSDT --source binance --interval 15m --horizon 4
+updown evaluate SPY --models ridge,random_forest --folds 4  # only some models
 python -m estudios.velas_regimenes                          # per-candle and per-regime study
 python -m estudios.etapas_confianza                         # confidence curve, HMM stages, per-stage models
 python -m estudios.graficos                                 # README charts from the results files
 streamlit run app.py                                        # web app
 ```
 
-`updown evaluar` also prints the hit rate by confidence of the best model.
+`updown evaluate` also prints the hit rate by confidence of the best model. If a download fails, the CLI says why (unknown symbol, Binance unavailable in your country, Yahoo rate limits) and exits with code 2.
 
 The **web app** shows which stage each market is in right now (rule-based label plus the HMM probabilities, as a description and not as a signal) and has three tabs:
 

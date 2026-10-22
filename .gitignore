@@ -8,3 +8,4 @@ estudios/*.log
 *.log
 build/
 dist/
+bundle/

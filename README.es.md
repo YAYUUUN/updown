@@ -25,6 +25,7 @@ python -m updown evaluar BTCUSDT --fuente binance --intervalo 1h
 python -m updown evaluar SPY --modelos lineal,ridge,knn     # solo algunos modelos
 python -m updown predecir <símbolo> --intervalo 1h          # P(sube) para la última barra cerrada
 python -m updown vivo <símbolo> --fuente binance --intervalo 1m   # bucle + registro verificable
+python -m updown evaluate SPY --interval 1d                  # los mismos comandos, con nombres en inglés
 python -m estudios.comparativa                              # la comparativa de abajo
 python -m estudios.etapas_confianza                         # confianza, etapas del HMM y modelos por etapa
 python -m estudios.graficos                                 # gráficos del README a partir de los resultados
