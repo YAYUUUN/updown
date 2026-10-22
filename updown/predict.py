@@ -15,8 +15,9 @@ from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
+import requests
 
-from .data import INTERVAL_SECONDS, Market, default_context, drop_unclosed, fetch
+from .data import INTERVAL_SECONDS, DataError, Market, default_context, drop_unclosed, fetch
 from .features import dataset, model_columns
 from .models import ALL_MODELS, MODELS, make_model
 
@@ -35,7 +36,8 @@ def load_dataset(market: Market, horizon: int = 1, context: list[Market] | None 
     for cm in ctx_markets:
         try:
             ctx[cm.symbol] = load_bars(cm, now, n_bars)
-        except Exception as exc:  # una referencia caída no debe tumbar la predicción
+        except (DataError, requests.RequestException, ValueError, KeyError, OSError) as exc:
+            # una referencia caída no debe tumbar la predicción
             print(f"[aviso] sin datos de contexto {cm.symbol}: {exc}")
     data = dataset(bars, market.interval, horizon, ctx, seq_len, candles, regimes)
     data.attrs["last_close"] = float(bars["close"].iloc[-1])
@@ -109,7 +111,8 @@ def log_prediction(path: str, pred: Prediction) -> bool:
     """Añade la predicción si esa barra no estaba ya apuntada. Devuelve True si la añade."""
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     row = {"bar_time": pred.bar_time.isoformat(), "close": pred.close, "target_time": pred.target_time.isoformat(),
-           "logged_at": pd.Timestamp.now(tz="UTC").isoformat(), **{f"p_{k}": round(v, 5) for k, v in pred.probs.items()},
+           "logged_at": pd.Timestamp.now(tz="UTC").isoformat(),
+           **{f"p_{k}": round(v, 5) for k, v in pred.probs.items()},
            "close_real": np.nan, "sube_real": np.nan}
     if os.path.exists(path):
         old = pd.read_csv(path)
@@ -122,7 +125,11 @@ def log_prediction(path: str, pred: Prediction) -> bool:
 
 
 def update_outcomes(path: str, bars: pd.DataFrame, horizon: int) -> pd.DataFrame:
-    """Rellena el resultado real de las predicciones cuyo horizonte ya ha pasado."""
+    """Rellena el resultado real de las predicciones cuyo horizonte ya ha pasado.
+
+    Se compara con el cierre de la vela de la predicción tal como lo dan las barras, no con
+    el apuntado en el registro: si aquel faltara (NaN), todas las comparaciones darían "bajó".
+    """
     if not os.path.exists(path):
         return pd.DataFrame()
     log = pd.read_csv(path)
@@ -131,9 +138,9 @@ def update_outcomes(path: str, bars: pd.DataFrame, horizon: int) -> pd.DataFrame
     for i, r in log[log["sube_real"].isna()].iterrows():
         j = pos.get(r["bar_time"])
         if j is not None and j + horizon < len(closes):
-            future = float(closes.iloc[j + horizon])
+            base, future = float(closes.iloc[j]), float(closes.iloc[j + horizon])
             log.at[i, "close_real"] = future
-            log.at[i, "sube_real"] = float(future > r["close"])
+            log.at[i, "sube_real"] = float(future > base)
     log.to_csv(path, index=False)
     return log
 

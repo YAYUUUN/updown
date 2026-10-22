@@ -5,6 +5,8 @@
     python -m updown evaluar SPY,QQQ,IWM,DIA --intervalo 1h --agrupado
     python -m updown predecir BTC-USD --intervalo 1h
     python -m updown vivo BTCUSDT --fuente binance --intervalo 1m
+
+Alias en inglés: audit, evaluate, predict, live; --source, --interval, --horizon, --models...
 """
 from __future__ import annotations
 
@@ -13,14 +15,23 @@ import sys
 import time
 
 import pandas as pd
+import requests
 
 from . import audit
 from .confidence import confidence_curve, confidence_curve_live
-from .data import INTERVAL_SECONDS, Market, drop_unclosed, fetch
+from .data import INTERVAL_SECONDS, DataError, Market, drop_unclosed, fetch
 from .evaluate import evaluate
 from .models import MODELS
-from .predict import (live_scoreboard, load_dataset, load_pooled, log_path, log_prediction, predict_now,
-                      target_label, update_outcomes)
+from .predict import (
+    live_scoreboard,
+    load_dataset,
+    load_pooled,
+    log_path,
+    log_prediction,
+    predict_now,
+    target_label,
+    update_outcomes,
+)
 
 DISCLAIMER = "Herramienta de investigación, no asesoramiento financiero."
 
@@ -106,7 +117,7 @@ def cmd_vivo(args) -> int:
                     print(board.round(3).to_string())
         except KeyboardInterrupt:
             return 0
-        except Exception as exc:  # caídas de red: se reintenta en la siguiente vuelta
+        except Exception as exc:  # noqa: BLE001  (el bucle en vivo no debe morir por un fallo puntual)
             print(f"[aviso] {type(exc).__name__}: {exc}")
         try:
             time.sleep(max(15, min(INTERVAL_SECONDS[market.interval] // 4, 300)))
@@ -114,31 +125,55 @@ def cmd_vivo(args) -> int:
             return 0
 
 
+DOWNLOAD_HELP = (
+    "No se pudieron descargar los datos. Comprueba el símbolo y tu conexión. Binance no está disponible en "
+    "todos los países (prueba --fuente yahoo con símbolos como BTC-USD) y yfinance es un cliente no oficial "
+    "de Yahoo que a veces falla o limita las peticiones: espera unos minutos y vuelve a intentarlo."
+)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Comandos en español con alias en inglés (auditoria/audit, evaluar/evaluate, predecir/predict, vivo/live)."""
+    ap = argparse.ArgumentParser(prog="updown", description="¿Subirá? Probabilidades con su historial honesto. "
+                                                            "Will it go up? Probabilities with an honest track record.")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    audit_p = sub.add_parser("auditoria", aliases=["audit"], help="comprueba el evaluador con datos sintéticos")
+    audit_p.set_defaults(func=lambda args: 0 if all(audit.run().values()) else 1)
+    commands = (("evaluar", "evaluate", cmd_evaluar, "walk-forward con todos los modelos"),
+                ("predecir", "predict", cmd_predecir, "P(sube) para la última vela cerrada"),
+                ("vivo", "live", cmd_vivo, "bucle en vivo con registro verificable"))
+    for name, alias, func, help_text in commands:
+        p = sub.add_parser(name, aliases=[alias], help=help_text)
+        p.set_defaults(func=func)
+        p.add_argument("simbolos", metavar="SYMBOLS",
+                       help="p. ej. AAPL, BTC-USD, ^GSPC; varios separados por comas para evaluar")
+        p.add_argument("--fuente", "--source", default="yahoo", choices=["yahoo", "binance"])
+        p.add_argument("--intervalo", "--interval", default="1d")
+        p.add_argument("--horizonte", "--horizon", type=int, default=1, help="barras hacia delante (1 = la siguiente)")
+        p.add_argument("--modelos", "--models", default="", help=f"de entre {','.join(MODELS)} (por defecto, todos)")
+        p.add_argument("--contexto", "--context", default="", help="mercados de referencia, p. ej. SPY,^VIX")
+        p.add_argument("--sin-contexto", "--no-context", action="store_true")
+        if name == "evaluar":
+            p.add_argument("--agrupado", "--pooled", action="store_true",
+                           help="un solo modelo entrenado con todos los símbolos")
+            p.add_argument("--bloques", "--folds", type=int, default=6)
+            p.add_argument("--coste-bps", "--cost-bps", type=float, default=5.0,
+                           help="coste por operación en puntos básicos")
+        if name == "vivo":
+            p.add_argument("--registro", "--log-dir", default="registro")
+    return ap
+
+
 def main(argv=None) -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")  # la consola de Windows no es UTF-8 por defecto
-    ap = argparse.ArgumentParser(prog="updown", description="¿Subirá? Probabilidades con su historial honesto.")
-    sub = ap.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("auditoria", help="comprueba el evaluador con datos sintéticos")
-    for name in ("evaluar", "predecir", "vivo"):
-        p = sub.add_parser(name)
-        p.add_argument("simbolos", help="p. ej. AAPL, BTC-USD, ^GSPC; varios separados por comas para evaluar")
-        p.add_argument("--fuente", default="yahoo", choices=["yahoo", "binance"])
-        p.add_argument("--intervalo", default="1d")
-        p.add_argument("--horizonte", type=int, default=1, help="barras hacia delante (1 = la siguiente)")
-        p.add_argument("--modelos", default="", help=f"de entre {','.join(MODELS)} (por defecto, los tres)")
-        p.add_argument("--contexto", default="", help="mercados de referencia, p. ej. SPY,^VIX")
-        p.add_argument("--sin-contexto", action="store_true")
-        if name == "evaluar":
-            p.add_argument("--agrupado", action="store_true", help="un solo modelo entrenado con todos los símbolos")
-            p.add_argument("--bloques", type=int, default=6)
-            p.add_argument("--coste-bps", type=float, default=5.0, help="coste por operación en puntos básicos")
-        if name == "vivo":
-            p.add_argument("--registro", default="registro")
-    args = ap.parse_args(argv)
-    if args.cmd == "auditoria":
-        return 0 if all(audit.run().values()) else 1
-    return {"evaluar": cmd_evaluar, "predecir": cmd_predecir, "vivo": cmd_vivo}[args.cmd](args)
+    args = build_parser().parse_args(argv)
+    try:
+        return args.func(args)
+    except (DataError, requests.RequestException) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        print(DOWNLOAD_HELP, file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":
