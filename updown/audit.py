@@ -33,6 +33,35 @@ def synthetic_bars(n: int = 3000, rho: float = 0.0, seed: int = 0, vol: float = 
     return pd.DataFrame({"open": open_, "high": high, "low": low, "close": close, "volume": volume}, index=idx)
 
 
+def stage_bars(n: int = 3000, seed: int = 0, stay: float = 0.99) -> tuple[pd.DataFrame, pd.Series]:
+    """Barras diarias que alternan dos etapas ocultas (cadena de Markov, duración media 1/(1-stay)).
+
+      · calma   : volatilidad 0,5 %, deriva al alza, retornos con inercia (rho = +0,3).
+      · agitada : volatilidad 2,5 %, deriva a la baja, retornos que se revierten (rho = -0,3).
+
+    Un modelo único ve las dos reglas mezcladas y casi se cancelan; uno por etapa
+    puede aprender cada una. Devuelve las barras y la etapa verdadera de cada una.
+    """
+    rng = np.random.default_rng(seed)
+    state = np.zeros(n, dtype=int)
+    for t in range(1, n):
+        state[t] = state[t - 1] if rng.uniform() < stay else 1 - state[t - 1]
+    vol, drift, rho = np.array([0.005, 0.025]), np.array([0.0004, -0.002]), np.array([0.3, -0.3])
+    r = np.zeros(n)
+    for t in range(1, n):
+        s = state[t]
+        r[t] = drift[s] + rho[s] * (r[t - 1] - drift[state[t - 1]]) + rng.normal(0, vol[s])
+    close = 100 * np.exp(np.cumsum(r))
+    v = vol[state]
+    open_ = np.r_[close[0], close[:-1]] * np.exp(rng.normal(0, v / 4))
+    high = np.maximum(open_, close) * np.exp(np.abs(rng.normal(0, v / 2)))
+    low = np.minimum(open_, close) * np.exp(-np.abs(rng.normal(0, v / 2)))
+    idx = pd.bdate_range("2010-01-01", periods=n, tz="UTC")
+    bars = pd.DataFrame({"open": open_, "high": high, "low": low, "close": close,
+                         "volume": rng.lognormal(12, 0.3, n)}, index=idx)
+    return bars, pd.Series(np.where(state == 0, "calma", "agitada"), index=idx, name="etapa_real")
+
+
 def run(verbose: bool = True) -> dict[str, bool]:
     checks = {}
 

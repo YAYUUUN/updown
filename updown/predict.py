@@ -55,7 +55,7 @@ def load_pooled(markets: list[Market], horizon: int = 1, context: list[Market] |
         seq = own_seq if seq is None else [c for c in seq if c in own_seq]
         parts.append(d.assign(symbol=m.symbol))
     data = pd.concat(parts).sort_index()
-    extra = [c for c in data.columns if c.startswith(("up_v", "fwd_v")) or c == "regimen"]
+    extra = [c for c in data.columns if c.startswith(("up_v", "fwd_v", "hmm_")) or c == "regimen"]
     data = data[feats + seq + extra + ["up", "fwd_ret", "symbol"]].dropna(subset=feats + seq)
     data.attrs.update({"features": feats, "seq_features": seq, "seq_len": seq_len, "horizon": horizon,
                        "candles": candles,

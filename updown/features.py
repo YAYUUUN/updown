@@ -174,7 +174,9 @@ def dataset(bars: pd.DataFrame, interval: str, horizon: int = 1,
     """Tabla lista para modelar: features + `up` + `fwd_ret`, sin filas de calentamiento.
 
     Con `seq_len` > 0 añade la ventana de barras para los modelos secuenciales
-    (transformer). Esas columnas no las ven los demás modelos.
+    (transformer). Esas columnas no las ven los demás modelos. Con `regimes` añade
+    el régimen por reglas (`regimen`) y las observaciones del HMM (`hmm_vol`,
+    `hmm_tend`); tampoco son variables de los modelos: sirven para repartir velas.
     """
     X = build_features(bars, interval, context)
     y, fwd = build_target(bars, horizon)
@@ -189,8 +191,10 @@ def dataset(bars: pd.DataFrame, interval: str, horizon: int = 1,
     if candles:
         extra.append(build_candle_targets(bars, candles))
     if regimes:
-        from .regimes import detect_regimes
-        extra.append(detect_regimes(bars).to_frame())
+        from .hmm import hmm_observations
+        from .regimes import detect_regimes, regime_inputs
+        inputs = regime_inputs(bars)
+        extra += [detect_regimes(bars, inputs).to_frame(), hmm_observations(bars, inputs)]
     data = pd.concat(parts + extra, axis=1).join([y, fwd])
     ok = X.notna().all(axis=1) if S is None else X.notna().all(axis=1) & S.notna().all(axis=1)
     data = data[ok]
@@ -206,7 +210,7 @@ def dataset(bars: pd.DataFrame, interval: str, horizon: int = 1,
 def feature_columns(data: pd.DataFrame) -> list[str]:
     return data.attrs.get("features") or [c for c in data.columns
                                           if c not in ("up", "fwd_ret", "symbol", "regimen")
-                                          and not c.startswith(("seq_", "up_v", "fwd_v"))]
+                                          and not c.startswith(("seq_", "up_v", "fwd_v", "hmm_"))]
 
 
 def model_columns(data: pd.DataFrame, model) -> list[str]:

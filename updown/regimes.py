@@ -72,8 +72,8 @@ def regime_inputs(bars: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def detect_regimes(bars: pd.DataFrame) -> pd.Series:
-    x = regime_inputs(bars)
+def detect_regimes(bars: pd.DataFrame, inputs: pd.DataFrame | None = None) -> pd.Series:
+    x = regime_inputs(bars) if inputs is None else inputs
     ready = x["vol_alta"].notna() & x["tendencia"].notna()
     lab = pd.Series("lateral", index=bars.index, dtype=object)
     bajista = (x["tendencia"] < 0) & ~x["sobre_media"]
