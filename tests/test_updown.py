@@ -87,12 +87,46 @@ def test_drop_unclosed_daily_uses_session_close():
 
 
 def test_parse_binance_klines():
-    rows = [[1767225600000, "100", "110", "90", "105", "12.5", 1767229199999, "0", 10, "0", "0", "0"],
-            [1767229200000, "105", "106", "100", "101", "8.0", 1767232799999, "0", 7, "0", "0", "0"]]
+    rows = [[1767225600000, "100", "110", "90", "105", "12.5", 1767229199999, "0", 10, "7.5", "0", "0"],
+            [1767229200000, "105", "106", "100", "101", "8.0", 1767232799999, "0", 7, "2.0", "0", "0"]]
     df = parse_binance_klines(rows)
-    assert list(df.columns) == ["open", "high", "low", "close", "volume"]
+    assert list(df.columns) == ["open", "high", "low", "close", "volume", "trades", "taker_buy"]
     assert df["close"].tolist() == [105.0, 101.0]
+    assert df["trades"].tolist() == [10.0, 7.0] and df["taker_buy"].tolist() == [7.5, 2.0]
     assert str(df.index.tz) == "UTC"
+
+
+def _with_order_flow(bars, seed=0):
+    rng = np.random.default_rng(seed)
+    out = bars.copy()
+    out["taker_buy"] = out["volume"] * rng.uniform(0.3, 0.7, len(out))
+    out["trades"] = rng.integers(100, 1000, len(out)).astype(float)
+    return out
+
+
+def test_order_flow_features(bars):
+    b = _with_order_flow(audit.synthetic_bars(n=400, seed=3).set_axis(
+        pd.date_range("2026-01-01", periods=400, freq="15min", tz="UTC")))
+    b.iloc[10, b.columns.get_loc("volume")] = 0.0
+    f = build_features(b, "15m")
+    i = 300
+    assert f["taker_ratio"].iloc[i] == pytest.approx(b["taker_buy"].iloc[i] / b["volume"].iloc[i])
+    assert f["taker_ratio"].iloc[10] == 0.5                       # sin volumen: equilibrio
+    hour = b.iloc[i - 3:i + 1]                                     # 4 velas de 15 min
+    assert f["taker_ratio_1h"].iloc[i] == pytest.approx(hour["taker_buy"].sum() / hour["volume"].sum())
+    day = np.log1p(b["trades"].iloc[i - 95:i + 1])
+    assert f["trades_z"].iloc[i] == pytest.approx((day.iloc[-1] - day.mean()) / day.std())
+    assert "taker_ratio" not in build_features(bars, "1d")         # Yahoo no trae flujo de órdenes
+    tampered = b.copy()
+    tampered.iloc[i + 1:, tampered.columns.get_loc("taker_buy")] *= 0.1
+    pd.testing.assert_frame_equal(f.iloc[: i + 1], build_features(tampered, "15m").iloc[: i + 1])
+
+
+def test_transformer_window_gets_taker_channel(bars):
+    b = _with_order_flow(bars)
+    s = sequence_features(b, 4)
+    assert s["seq_tb_2"].iloc[100] == pytest.approx(b["taker_buy"].iloc[98] / b["volume"].iloc[98] - 0.5)
+    assert not any(c.startswith("seq_tb_") for c in sequence_features(bars, 4).columns)
 
 
 def test_sequence_window_does_not_look_ahead(bars):
@@ -204,3 +238,19 @@ def test_binance_cache_only_downloads_new_bars(tmp_path, monkeypatch):
     assert all("startTime" in c for c in api.calls)       # solo pide lo nuevo
     assert len(second) == 1200 and second["close"].iloc[-1] == 100 + 1509
     assert second.index.is_unique and second.index.is_monotonic_increasing
+
+
+def test_old_cache_without_version_is_downloaded_again(tmp_path, monkeypatch):
+    import pickle
+    import time
+    from updown.data import Market, _cache_path, fetch
+    monkeypatch.setenv("UPDOWN_CACHE", str(tmp_path))
+    m = Market("binance", "BTCUSDT", "1h")
+    api = _FakeBinance(n_now=1500)
+    old = fetch(m, bars=1200, session=api)[["open", "high", "low", "close", "volume"]]  # como las de antes
+    with open(_cache_path(m), "wb") as fh:
+        pickle.dump((old, {}, time.time()), fh)                                         # formato sin versión
+    api.calls = []
+    df = fetch(m, bars=1200, session=api)
+    assert not any("startTime" in c for c in api.calls)    # descarga completa, no incremental
+    assert {"trades", "taker_buy"} <= set(df.columns) and df["taker_buy"].notna().all()

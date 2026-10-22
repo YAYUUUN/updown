@@ -13,6 +13,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from .data import INTERVAL_SECONDS, ORDER_FLOW
 from .indicators import atr, ema, rsi
 
 RETURN_WINDOWS = (1, 2, 3, 5, 10, 20, 60)
@@ -46,6 +47,7 @@ def build_features(bars: pd.DataFrame, interval: str,
         logv = np.log1p(v)
         f["volume_z"] = (logv - logv.rolling(20).mean()) / logv.rolling(20).std()
 
+    _add_order_flow(f, bars, interval)
     _add_calendar(f, interval)
     for name, ctx in (context or {}).items():
         _add_context(f, name, ctx)
@@ -54,9 +56,39 @@ def build_features(bars: pd.DataFrame, interval: str,
     return f.loc[:, f.notna().mean() > 0.5]
 
 
+def taker_ratio(bars: pd.DataFrame) -> pd.Series:
+    """Parte del volumen de cada vela que fueron compras agresivas (0,5 = equilibrio; sin volumen, 0,5)."""
+    v = bars["volume"]
+    return (bars["taker_buy"] / v).where(v > 0, 0.5)
+
+
+def _add_order_flow(f: pd.DataFrame, bars: pd.DataFrame, interval: str) -> None:
+    """Flujo de órdenes (solo velas de Binance): quién empuja y cuánta actividad hay.
+
+      · taker_ratio    : parte del volumen de la vela que fueron compras agresivas.
+      · taker_ratio_1h : lo mismo con todo el volumen de la última hora (si la vela dura menos).
+      · taker_ratio_z  : si esa proporción es inusual frente al último día (z-score).
+      · trades_z       : si el número de operaciones es inusual frente al último día.
+    """
+    if not set(ORDER_FLOW) <= set(bars.columns):
+        return
+    step = INTERVAL_SECONDS.get(interval, 86400)
+    hour = int(round(3600 / step))
+    day = max(int(round(86400 / step)), 20)
+    ratio = taker_ratio(bars)
+    f["taker_ratio"] = ratio
+    if hour >= 2:
+        vol_h = bars["volume"].rolling(hour).sum()
+        f["taker_ratio_1h"] = (bars["taker_buy"].rolling(hour).sum() / vol_h).where(vol_h > 0, 0.5)
+    f["taker_ratio_z"] = (ratio - ratio.rolling(day).mean()) / ratio.rolling(day).std()
+    logn = np.log1p(bars["trades"])
+    f["trades_z"] = (logn - logn.rolling(day).mean()) / logn.rolling(day).std()
+
+
+
 def _add_calendar(f: pd.DataFrame, interval: str) -> None:
     idx = f.index
-    dow = idx.dayofweek
+    dow = idx.day_of_week
     f["dow_sin"] = np.sin(2 * np.pi * dow / 7)
     f["dow_cos"] = np.cos(2 * np.pi * dow / 7)
     if interval not in ("1d", "1wk", "1w"):
@@ -93,14 +125,15 @@ def build_target(bars: pd.DataFrame, horizon: int = 1) -> tuple[pd.Series, pd.Se
     return y.rename("up"), fwd.rename("fwd_ret")
 
 
-SEQ_CHANNELS = ("r", "hl", "body", "vz")
+SEQ_CHANNELS = ("r", "hl", "body", "vz", "tb")
 
 
 def sequence_features(bars: pd.DataFrame, seq_len: int) -> pd.DataFrame:
     """Las últimas `seq_len` barras como columnas seq_<canal>_<retardo> (retardo 0 = barra actual).
 
-    Canales por barra: retorno log, rango log(high/low), cuerpo log(close/open) y
-    volumen relativo (z-score sobre 96 barras, recortado). Solo usan el pasado.
+    Canales por barra: retorno log, rango log(high/low), cuerpo log(close/open),
+    volumen relativo (z-score sobre 96 barras, recortado) y, si la fuente trae flujo
+    de órdenes (Binance), la proporción de compras agresivas centrada en 0. Solo usan el pasado.
     """
     c, o, h, l, v = (bars[k] for k in ("close", "open", "high", "low", "volume"))
     logv = np.log1p(v)
@@ -110,8 +143,10 @@ def sequence_features(bars: pd.DataFrame, seq_len: int) -> pd.DataFrame:
         "body": np.log(c / o),
         "vz": ((logv - logv.rolling(96, min_periods=20).mean()) / logv.rolling(96, min_periods=20).std()).clip(-5, 5),
     }
+    if set(ORDER_FLOW) <= set(bars.columns):
+        base["tb"] = taker_ratio(bars) - 0.5
     cols = {}
-    for ch in SEQ_CHANNELS:
+    for ch in [ch for ch in SEQ_CHANNELS if ch in base]:
         series = base[ch].replace([np.inf, -np.inf], np.nan)
         for lag in range(seq_len):
             cols[f"seq_{ch}_{lag}"] = series.shift(lag)

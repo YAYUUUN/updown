@@ -46,12 +46,13 @@ def load_pooled(markets: list[Market], horizon: int = 1, context: list[Market] |
                 now: pd.Timestamp | None = None, bars: int | None = None, seq_len: int = 0,
                 candles: int = 0, regimes: bool = False) -> pd.DataFrame:
     """Varios activos apilados en una sola tabla (columna `symbol`): más datos, mismo modelo."""
-    parts, feats = [], None
+    parts, feats, seq = [], None, None
     for m in markets:
         d = load_dataset(m, horizon, context, now, bars, seq_len, candles, regimes)
         cols = d.attrs["features"]
-        seq = d.attrs.get("seq_features", [])
+        own_seq = d.attrs.get("seq_features", [])
         feats = cols if feats is None else [c for c in feats if c in cols]
+        seq = own_seq if seq is None else [c for c in seq if c in own_seq]
         parts.append(d.assign(symbol=m.symbol))
     data = pd.concat(parts).sort_index()
     extra = [c for c in data.columns if c.startswith(("up_v", "fwd_v")) or c == "regimen"]

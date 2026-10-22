@@ -1,7 +1,8 @@
 """Transformer sobre la ventana de barras recientes (necesita PyTorch).
 
-Entrada por fila: una secuencia de `seq_len` barras con 3-4 canales (retorno,
-rango, cuerpo, volumen relativo) y, aparte, las variables tabulares de siempre.
+Entrada por fila: una secuencia de `seq_len` barras con 3-5 canales (retorno,
+rango, cuerpo, volumen relativo y, con Binance, proporción de compras agresivas)
+y, aparte, las variables tabulares de siempre.
 
     barras (L x C) -> lineal a d_model + posición aprendida -> 2 capas encoder
                    -> media temporal ─┐
@@ -18,6 +19,8 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+
+from .features import SEQ_CHANNELS
 
 
 def _torch():
@@ -41,7 +44,7 @@ class TransformerModel:
     def _split(self, X: pd.DataFrame):
         seq_cols = [c for c in X.columns if c.startswith("seq_")]
         tab_cols = [c for c in X.columns if not c.startswith("seq_")]
-        channels = sorted({c.split("_")[1] for c in seq_cols}, key=lambda ch: ("r", "hl", "body", "vz").index(ch))
+        channels = sorted({c.split("_")[1] for c in seq_cols}, key=SEQ_CHANNELS.index)
         lags = sorted({int(c.rsplit("_", 1)[1]) for c in seq_cols}, reverse=True)  # del más antiguo al actual
         seq = np.stack([X[[f"seq_{ch}_{lag}" for lag in lags]].to_numpy(np.float32) for ch in channels], axis=-1)
         return seq, X[tab_cols].to_numpy(np.float32)

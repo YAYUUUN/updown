@@ -16,6 +16,10 @@ Límites de Yahoo que conviene tener presentes (son suyos, no de este código):
 La última barra que devuelven las dos fuentes suele estar ABIERTA (el precio se
 sigue moviendo). Predecir sobre una barra abierta es mirar el futuro a medias,
 así que todo el sistema trabaja solo con barras cerradas: `drop_unclosed`.
+
+Las velas de Binance traen además el flujo de órdenes: cuántas operaciones hubo
+(`trades`) y qué volumen fue de compras agresivas, es decir, órdenes que compran
+al precio de venta en ese momento (`taker_buy`). Yahoo no lo da.
 """
 from __future__ import annotations
 
@@ -30,6 +34,11 @@ import pandas as pd
 import requests
 
 COLUMNS = ["open", "high", "low", "close", "volume"]
+ORDER_FLOW = ["trades", "taker_buy"]  # solo Binance: nº de operaciones y volumen de compras agresivas
+
+# Sube cuando cambian las columnas guardadas: una caché de otra versión se descarta
+# entera en vez de mezclar velas viejas (sin flujo de órdenes) con las nuevas.
+CACHE_VERSION = 2
 
 YAHOO_MAX_PERIOD = {
     "1m": "7d", "2m": "60d", "5m": "60d", "15m": "60d", "30m": "60d",
@@ -85,10 +94,12 @@ def _cache_path(market: Market) -> str:
 def _load_cache(path: str):
     try:
         with open(path, "rb") as fh:
-            df, attrs, fetched_at = pickle.load(fh)
+            version, df, attrs, fetched_at = pickle.load(fh)  # el formato sin versión no encaja: ValueError
+        if version != CACHE_VERSION:
+            return None, None
         df.attrs = attrs
         return df, fetched_at
-    except (OSError, EOFError, pickle.UnpicklingError, ValueError):
+    except (OSError, EOFError, pickle.UnpicklingError, ValueError, TypeError, AttributeError, ImportError):
         return None, None
 
 
@@ -96,7 +107,7 @@ def _save_cache(path: str, df: pd.DataFrame) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + ".tmp"
     with open(tmp, "wb") as fh:
-        pickle.dump((df, dict(df.attrs), time.time()), fh)
+        pickle.dump((CACHE_VERSION, df, dict(df.attrs), time.time()), fh)
     os.replace(tmp, path)
 
 
@@ -205,6 +216,8 @@ def parse_binance_klines(rows: list[list]) -> pd.DataFrame:
             "quote_volume", "trades", "taker_base", "taker_quote", "ignore"]
     raw = pd.DataFrame(rows, columns=cols)
     out = raw[COLUMNS].astype(float)
+    out["trades"] = raw["trades"].astype(float)
+    out["taker_buy"] = raw["taker_base"].astype(float)
     out.index = pd.to_datetime(raw["open_time"].astype("int64"), unit="ms", utc=True)
     return _clean(out)
 
