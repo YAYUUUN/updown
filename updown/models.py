@@ -170,9 +170,11 @@ _FACTORIES = {
     "ridge": lambda: PlattModel("ridge", lambda: make_pipeline(StandardScaler(), RidgeClassifier(alpha=10.0))),
     "knn": lambda: SklearnModel("knn", _knn, features=KNN_FEATURES),
     "lasso": lambda: SklearnModel("lasso", lambda n: make_pipeline(
-        StandardScaler(), LogisticRegression(l1_ratio=1.0, solver="saga", C=0.05, max_iter=3000, tol=1e-3))),
+        StandardScaler(), LogisticRegression(l1_ratio=1.0, solver="saga", C=0.05, max_iter=3000, tol=1e-3,
+                                             random_state=0))),
     "elastic_net": lambda: SklearnModel("elastic_net", lambda n: make_pipeline(
-        StandardScaler(), LogisticRegression(l1_ratio=0.5, solver="saga", C=0.05, max_iter=3000, tol=1e-3))),
+        StandardScaler(), LogisticRegression(l1_ratio=0.5, solver="saga", C=0.05, max_iter=3000, tol=1e-3,
+                                             random_state=0))),
     "lda": lambda: SklearnModel("lda", lambda n: make_pipeline(
         StandardScaler(), LinearDiscriminantAnalysis(solver="lsqr", shrinkage="auto"))),
     "svm_lineal": lambda: PlattModel("svm_lineal", lambda: make_pipeline(
