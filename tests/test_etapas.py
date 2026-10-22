@@ -100,3 +100,58 @@ def test_pooled_stage_hmm_filters_each_symbol_separately():
     alone = model.proba(pooled[pooled["symbol"] == "A"])
     together = model.proba(pooled)[pooled["symbol"].to_numpy() == "A"]
     pd.testing.assert_frame_equal(alone, together)
+
+
+def test_inner_validation_is_the_purged_end_of_training():
+    from updown.stages import inner_split
+    times = pd.date_range("2026-01-01", periods=1000, freq="15min", tz="UTC")
+    fit_t, val_t = inner_split(times, 0.2, purge=4)
+    assert len(val_t) == 200 and val_t.min() == times[800] and val_t.max() == times[-1]
+    assert fit_t.max() == times[795]                                     # 4 velas de purga
+
+
+def test_stage_choice_ignores_the_test_period():
+    from updown.evaluate import time_folds
+    from updown.stages import evaluate_stages
+    bars, _ = audit.stage_bars(n=2500, seed=8)
+    data = dataset(bars, "1d", regimes=True)
+    kw = dict(models=("ridge", "lasso"), n_folds=3, min_train=150, min_val=60)
+    rep = evaluate_stages(data, **kw)
+    train_t, _ = next(time_folds(data[data["up"].notna()].index, 3, 0.4, 1))
+
+    tampered = data.copy()
+    future = tampered.index > train_t.max()                              # prueba del 1.er bloque y después
+    feats = tampered.attrs["features"]
+    tampered.loc[future, "up"] = 1 - tampered.loc[future, "up"]          # otros resultados
+    tampered.loc[future, "fwd_ret"] *= -1
+    tampered.loc[future, feats] = tampered.loc[future, feats].to_numpy()[::-1]   # otras variables
+    tampered.loc[future, ["hmm_vol", "hmm_tend"]] *= -1                  # otras etapas
+    tampered.loc[future, "regimen"] = "calma"
+    rep2 = evaluate_stages(tampered, **kw)
+
+    first = lambda df: df[df["bloque"] == 0].reset_index(drop=True)
+    pd.testing.assert_frame_equal(first(rep.choices), first(rep2.choices))
+    pd.testing.assert_frame_equal(first(rep.val_rank), first(rep2.val_rank))
+    assert not np.allclose(rep.oos["por_etapas_hmm"]["p"], rep2.oos["por_etapas_hmm"]["p"])
+
+
+def test_stage_model_learns_a_rule_that_flips_between_stages():
+    from updown.stages import evaluate_stages
+    bars, real = audit.stage_bars(n=3000, seed=6, vol=(0.01, 0.01), drift=(0.0, 0.0), rho=(0.4, -0.4))
+    data = dataset(bars, "1d", regimes=True)
+    data["etapa_real"] = real.reindex(data.index)                        # etapa conocida: prueba la mecánica
+    rep = evaluate_stages(data, ("ridge",), sources=("etapa_real",), n_folds=3, min_train=300, min_val=150)
+    vs = rep.comparison.set_index("rival").loc["general_validado"]
+    assert vs["mejora_brier"] > 0 and vs["p_valor"] < 0.01
+    assert rep.metrics.loc["por_etapas_etapa_real", "auc"] > rep.metrics.loc["general_validado", "auc"] + 0.03
+    assert set(rep.metrics.index) >= {"siempre_sube", "momentum", "ridge", "general_validado"}
+    assert rep.metrics.loc["por_etapas_etapa_real", "p_auc_corregido"] >= rep.metrics.loc["por_etapas_etapa_real", "p_auc"]
+
+
+def test_small_stages_fall_back_to_the_general_model():
+    from updown.stages import evaluate_stages
+    bars, _ = audit.stage_bars(n=2000, seed=9)
+    data = dataset(bars, "1d", regimes=True)
+    rep = evaluate_stages(data, ("ridge",), sources=("reglas",), n_folds=3, min_train=10 ** 9)
+    assert (rep.choices["motivo"] != "validación").all()
+    np.testing.assert_allclose(rep.oos["por_etapas_reglas"]["p"], rep.oos["general_validado"]["p"])

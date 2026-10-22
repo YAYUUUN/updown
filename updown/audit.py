@@ -33,20 +33,24 @@ def synthetic_bars(n: int = 3000, rho: float = 0.0, seed: int = 0, vol: float = 
     return pd.DataFrame({"open": open_, "high": high, "low": low, "close": close, "volume": volume}, index=idx)
 
 
-def stage_bars(n: int = 3000, seed: int = 0, stay: float = 0.99) -> tuple[pd.DataFrame, pd.Series]:
+def stage_bars(n: int = 3000, seed: int = 0, stay: float = 0.99, vol=(0.005, 0.025), drift=(0.0004, -0.002),
+               rho=(0.3, -0.3)) -> tuple[pd.DataFrame, pd.Series]:
     """Barras diarias que alternan dos etapas ocultas (cadena de Markov, duración media 1/(1-stay)).
 
+    Por defecto:
       · calma   : volatilidad 0,5 %, deriva al alza, retornos con inercia (rho = +0,3).
       · agitada : volatilidad 2,5 %, deriva a la baja, retornos que se revierten (rho = -0,3).
 
-    Un modelo único ve las dos reglas mezcladas y casi se cancelan; uno por etapa
-    puede aprender cada una. Devuelve las barras y la etapa verdadera de cada una.
+    La regla cambia de signo entre etapas: un modelo por etapa puede aprender cada
+    una. Con volatilidades distintas, un modelo lineal único ya imita buena parte del
+    cambio (las variables sin normalizar pesan más en la etapa agitada); con la misma
+    volatilidad, no. Devuelve las barras y la etapa verdadera de cada una.
     """
     rng = np.random.default_rng(seed)
     state = np.zeros(n, dtype=int)
     for t in range(1, n):
         state[t] = state[t - 1] if rng.uniform() < stay else 1 - state[t - 1]
-    vol, drift, rho = np.array([0.005, 0.025]), np.array([0.0004, -0.002]), np.array([0.3, -0.3])
+    vol, drift, rho = np.asarray(vol, dtype=float), np.asarray(drift, dtype=float), np.asarray(rho, dtype=float)
     r = np.zeros(n)
     for t in range(1, n):
         s = state[t]

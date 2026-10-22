@@ -33,22 +33,17 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from .evaluate import se_by_day
+
 COVERAGES = (1.0, 0.5, 0.2, 0.1, 0.05)
 
 
 def ci95_by_day(correct: np.ndarray, times: pd.Index) -> tuple[float, float]:
     """Intervalo del acierto con error estándar agrupado por día (cluster-robusto)."""
-    n = len(correct)
-    if n == 0:
+    if len(correct) == 0:
         return float("nan"), float("nan")
     acc = float(np.mean(correct))
-    days = pd.DatetimeIndex(times).floor("D") if isinstance(times, pd.DatetimeIndex) else np.arange(n)
-    g = pd.DataFrame({"day": days, "k": correct}).groupby("day")["k"].agg(["sum", "size"])
-    c = len(g)
-    if c < 2:
-        return float("nan"), float("nan")
-    var = c / (c - 1) * float(((g["sum"] - acc * g["size"]) ** 2).sum()) / n ** 2
-    half = 1.96 * np.sqrt(var)
+    half = 1.96 * se_by_day(correct, times)
     return acc - half, acc + half
 
 

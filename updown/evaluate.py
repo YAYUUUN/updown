@@ -105,6 +105,22 @@ def scores(oos: pd.DataFrame, horizon: int = 1) -> dict:
     }
 
 
+def se_by_day(values: np.ndarray, times: pd.Index) -> float:
+    """Error estándar de la media agrupando por día (cluster-robusto).
+
+    Varios activos a la misma hora y velas seguidas no son observaciones
+    independientes; tratarlas como tales daría un error estándar demasiado pequeño.
+    """
+    values = np.asarray(values, dtype=float)
+    n = len(values)
+    days = pd.DatetimeIndex(times).floor("D") if isinstance(times, pd.DatetimeIndex) else np.arange(n)
+    resid = pd.Series(values - values.mean()).groupby(np.asarray(days)).sum()
+    c = len(resid)
+    if c < 2:
+        return float("nan")
+    return float(np.sqrt(c / (c - 1) * (resid ** 2).sum()) / n)
+
+
 def holm(p: pd.Series) -> pd.Series:
     """p-valores ajustados por Holm-Bonferroni (controla la tasa de falsos positivos familiar)."""
     p = p.astype(float)
