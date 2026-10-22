@@ -254,3 +254,19 @@ def test_old_cache_without_version_is_downloaded_again(tmp_path, monkeypatch):
     df = fetch(m, bars=1200, session=api)
     assert not any("startTime" in c for c in api.calls)    # descarga completa, no incremental
     assert {"trades", "taker_buy"} <= set(df.columns) and df["taker_buy"].notna().all()
+
+
+@pytest.mark.parametrize(("name", "expected"), [("lasso", 1.0), ("elastic_net", 0.5)])
+def test_sparse_models_really_use_l1(name, expected, bars):
+    """En scikit-learn < 1.8, l1_ratio sin penalty se ignora y el modelo queda en L2 sin avisar."""
+    data = dataset(bars, "1d")
+    cols = data.attrs["features"]
+    train = data[data["up"].notna()]
+    est = make_model(name).fit(train[cols], train["up"]).estimator_[-1]
+    if est.penalty == "l1":
+        assert expected == 1.0
+    else:  # "elasticnet" en scikit-learn < 1.8; en >= 1.8 manda l1_ratio
+        assert est.penalty != "l2"
+        assert est.l1_ratio == expected
+    if name == "lasso":
+        assert (est.coef_ == 0).any()  # L1 de verdad: descarta variables

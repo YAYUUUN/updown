@@ -34,8 +34,11 @@ con fuerza (hojas de >=100 filas, profundidad baja, L2...).
 """
 from __future__ import annotations
 
+import re
+
 import numpy as np
 import pandas as pd
+import sklearn
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 from sklearn.ensemble import ExtraTreesClassifier, HistGradientBoostingClassifier, RandomForestClassifier
 from sklearn.linear_model import LogisticRegression, RidgeClassifier
@@ -159,6 +162,25 @@ class EnsembleModel:
 KNN_FEATURES = ("ret_1", "ret_5", "ret_20", "vol_ratio", "rsi_14", "dist_ema50_atr")
 
 
+def _sklearn_version() -> tuple[int, int]:
+    major, minor = (int(re.match(r"\d+", part).group()) for part in sklearn.__version__.split(".")[:2])
+    return major, minor
+
+
+def _sparse_logistic(l1_ratio: float, C: float = 0.05) -> LogisticRegression:
+    """Logística con L1 (l1_ratio=1) o elastic net, igual en cualquier scikit-learn.
+
+    Desde la 1.8 basta `l1_ratio`; antes hay que decir `penalty`, o `l1_ratio` se ignora en
+    silencio y el modelo se queda en L2 (lasso y elastic net serían otro ridge).
+    """
+    common = {"solver": "saga", "C": C, "max_iter": 3000, "tol": 1e-3, "random_state": 0}
+    if _sklearn_version() >= (1, 8):
+        return LogisticRegression(l1_ratio=l1_ratio, **common)
+    if l1_ratio == 1.0:
+        return LogisticRegression(penalty="l1", **common)
+    return LogisticRegression(penalty="elasticnet", l1_ratio=l1_ratio, **common)
+
+
 def _knn(n: int):
     k = int(np.clip(np.sqrt(n), 25, 300))  # con más historia, más vecinos
     return make_pipeline(StandardScaler(), KNeighborsClassifier(n_neighbors=min(k, max(1, n - 1))))
@@ -169,12 +191,9 @@ _FACTORIES = {
         StandardScaler(), LogisticRegression(C=1e4, max_iter=5000))),
     "ridge": lambda: PlattModel("ridge", lambda: make_pipeline(StandardScaler(), RidgeClassifier(alpha=10.0))),
     "knn": lambda: SklearnModel("knn", _knn, features=KNN_FEATURES),
-    "lasso": lambda: SklearnModel("lasso", lambda n: make_pipeline(
-        StandardScaler(), LogisticRegression(l1_ratio=1.0, solver="saga", C=0.05, max_iter=3000, tol=1e-3,
-                                             random_state=0))),
-    "elastic_net": lambda: SklearnModel("elastic_net", lambda n: make_pipeline(
-        StandardScaler(), LogisticRegression(l1_ratio=0.5, solver="saga", C=0.05, max_iter=3000, tol=1e-3,
-                                             random_state=0))),
+    "lasso": lambda: SklearnModel("lasso", lambda n: make_pipeline(StandardScaler(), _sparse_logistic(1.0))),
+    "elastic_net": lambda: SklearnModel("elastic_net",
+                                        lambda n: make_pipeline(StandardScaler(), _sparse_logistic(0.5))),
     "lda": lambda: SklearnModel("lda", lambda n: make_pipeline(
         StandardScaler(), LinearDiscriminantAnalysis(solver="lsqr", shrinkage="auto"))),
     "svm_lineal": lambda: PlattModel("svm_lineal", lambda: make_pipeline(

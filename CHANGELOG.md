@@ -3,6 +3,16 @@
 All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [0.1.1] - 2026-10-23
+
+### Fixed
+- `lasso` and `elastic_net` silently trained as L2 (ridge-like) models on scikit-learn older than 1.8, which is
+  what pip installs on Python 3.10: `l1_ratio` was ignored without `penalty`. The penalty is now set explicitly
+  on older versions, and a test checks that both models really use L1.
+
+### Changed
+- CI also tests Python 3.10, the minimum version the package declares.
+
 ## [0.1.0] - 2026-10-23
 
 First public release.

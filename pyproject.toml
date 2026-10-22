@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "updown"
-version = "0.1.0"
+version = "0.1.1"
 description = "Will the next candle close higher? Probabilities from 13 models and a transformer, with an honest out-of-sample track record next to them."
 readme = "README.md"
 license = { text = "MIT" }
