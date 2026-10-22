@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "updown"
+version = "0.1.0"
+description = "Will the next candle close higher? Probabilities from 13 models and a transformer, with an honest out-of-sample track record next to them."
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Jiajun Wang", email = "jiajunw963@gmail.com" }]
+requires-python = ">=3.10"
+dependencies = ["numpy", "pandas>=2.0", "scikit-learn>=1.3", "yfinance", "requests"]
+keywords = ["time-series", "forecasting", "walk-forward", "backtesting", "machine-learning", "transformer"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Intended Audience :: Science/Research",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+[project.optional-dependencies]
+app = ["streamlit>=1.40"]
+deep = ["torch>=2.2"]
+dev = ["pytest", "matplotlib"]
+
+[project.scripts]
+updown = "updown.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/YAYUUUN/updown"
+
+[tool.setuptools]
+packages = ["updown"]
