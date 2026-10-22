@@ -15,6 +15,7 @@ import time
 import pandas as pd
 
 from . import audit
+from .confidence import confidence_curve, confidence_curve_live
 from .data import INTERVAL_SECONDS, Market, drop_unclosed, fetch
 from .evaluate import evaluate
 from .models import MODELS
@@ -57,6 +58,14 @@ def cmd_evaluar(args) -> int:
     print(rep.table[cols].round(4).to_string())
     print("\nCalibración del mejor modelo (¿cuando dice 55%, sube el 55% de las veces?):")
     print(rep.calibration.round(3).to_string())
+    if rep.best:
+        cc = confidence_curve(rep.oos[rep.best])
+        live = confidence_curve_live(rep.oos[rep.best])
+        cc["acierto_corte_previo"], cc["cobertura_corte_previo"] = live["acierto"], live["cobertura_real"]
+        print(f"\nAcierto según confianza de '{rep.best}' (el corte mira solo la probabilidad, nunca el resultado;"
+              " 'corte_previo' lo fija con los bloques anteriores, como en vivo):")
+        print(cc[["n", "confianza_media", "acierto", "ic95_bajo", "ic95_alto", "acierto_corte_previo",
+                  "cobertura_corte_previo"]].round(4).to_string())
     print("\nVEREDICTO:", rep.verdict)
     print(DISCLAIMER)
     return 0
