@@ -1,0 +1,56 @@
+name: pages
+
+# The web demo in web/ is static: it is deployed as is on every push, and once a week the
+# models it runs are retrained with fresh candles. If Binance does not answer, the models
+# committed in web/data are deployed unchanged.
+
+on:
+  push:
+    branches: [main]
+    paths: ["web/**", "estudios/web_*.py", "estudios/resultados_*.md", ".github/workflows/pages.yml"]
+  schedule:
+    - cron: "17 4 * * 1"  # Mondays 04:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: pip install -e .
+      - name: Retrain the web models with fresh candles
+        if: github.event_name != 'push'
+        env:
+          # GitHub runners are in the US, where api.binance.com refuses requests; the market-data mirror answers.
+          UPDOWN_BINANCE_URL: https://data-api.binance.vision/api/v3/klines
+        run: python -m estudios.web_modelos || echo "::warning::Could not refresh the models; deploying the committed ones."
+      - name: Study results as JSON
+        run: python -m estudios.web_resultados
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -45,7 +45,9 @@ YAHOO_MAX_PERIOD = {
     "60m": "730d", "1h": "730d", "1d": "max", "1wk": "max",
 }
 
-BINANCE_URL = "https://api.binance.com/api/v3/klines"
+# UPDOWN_BINANCE_URL permite usar el espejo de solo datos de mercado
+# (https://data-api.binance.vision/api/v3/klines), p. ej. desde servidores en EE. UU.
+BINANCE_URL = os.environ.get("UPDOWN_BINANCE_URL", "https://api.binance.com/api/v3/klines")
 BINANCE_DEFAULT_BARS = 20000  # 1h -> ~2,3 años; 1m -> ~2 semanas
 BINANCE_INTERVALS = {"1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "1w"}
 

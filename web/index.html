@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>updown · Will the next candle close higher?</title>
+<meta name="description" content="Open-source research tool: 13 models and a transformer try to predict whether the next market candle closes higher, with an honest out-of-sample track record. Live in your browser for BTC, ETH and SOL.">
+<meta property="og:title" content="updown · Will the next candle close higher?">
+<meta property="og:description" content="Barely. An honest, open-source answer with its out-of-sample track record, live in your browser.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f6f8b'/%3E%3Cpath d='M9 19l5-9 5 9' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M23 13v9' stroke='white' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+<script type="module" src="js/app.js"></script>
+</head>
+<body>
+<header class="hero">
+  <div class="wrap">
+    <nav class="top" aria-label="Project">
+      <span class="brand">updown <span class="ver">v0.2.0</span></span>
+      <span class="top-links">
+        <a href="#live">Live</a>
+        <a href="#results">Results</a>
+        <a href="#run">Run it</a>
+        <a href="https://github.com/YAYUUUN/updown">GitHub</a>
+      </span>
+    </nav>
+    <h1>Will the next candle close higher?</h1>
+    <p class="answer" id="answer">Barely. On 15-minute crypto candles the best models reach an out-of-sample AUC of <b data-fill="best-auc-1">0.54</b> on the next candle, where 0.50 is a coin flip, and the edge fades to <b data-fill="auc-4">0.51</b> by the fourth. On daily US stocks nothing beats "always up".</p>
+    <p class="sub">updown is an open-source Python tool that compares 13 models and a transformer on free market data and puts an honest track record next to every number. This page runs two of its models in your browser.</p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/YAYUUUN/updown">View on GitHub</a>
+      <a class="btn" href="#run">Run it on your computer</a>
+    </div>
+  </div>
+</header>
+
+<main>
+  <section id="live" class="band">
+    <div class="wrap">
+      <div class="section-head">
+        <h2>Right now</h2>
+        <p>The probability that each candle closes higher than the one before it, for BTC, ETH and SOL on Binance. Your browser downloads the latest candles and runs the models itself.</p>
+      </div>
+
+      <div class="controls">
+        <div class="seg" role="group" aria-label="Which candle" id="targets"></div>
+        <p class="status" id="status" aria-live="polite">Loading the latest candles…</p>
+      </div>
+
+      <div class="cards" id="cards"></div>
+
+      <p class="disclaimer"><b>Research and educational tool. Not financial advice.</b> A 53% hit rate on 15-minute candles is small next to trading fees and spreads, which these numbers ignore. Read each probability together with the track record below it.</p>
+
+      <h3 class="table-title" id="record-title">Track record for this candle</h3>
+      <p class="table-note" id="record-note"></p>
+      <div class="table-wrap">
+        <table class="record" id="record">
+          <thead><tr><th scope="col">Model</th><th scope="col">Hit rate</th><th scope="col">AUC</th><th scope="col">Brier skill vs “always up”</th><th scope="col">Periods won</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section id="results">
+    <div class="wrap">
+      <div class="section-head">
+        <h2>What two years of out-of-sample testing found</h2>
+        <p id="results-intro">Purged walk-forward evaluation on BTC, ETH and SOL, 15-minute candles, no costs.</p>
+      </div>
+
+      <figure class="chart">
+        <figcaption><b>AUC by candle.</b> The first candle is slightly predictable and the edge fades with distance. 0.50 is a coin flip.</figcaption>
+        <div id="chart-candles" class="chart-box"></div>
+        <ul class="legend" id="legend-candles"></ul>
+      </figure>
+
+      <figure class="chart">
+        <figcaption><b>AUC on the next candle by market regime.</b> Regimes are labelled from past prices and volume only. Predictability is lowest right after news-like shocks and highest in calm and sideways markets.</figcaption>
+        <div id="chart-regimes" class="chart-box"></div>
+      </figure>
+
+      <h3 class="table-title">Other markets</h3>
+      <p class="table-note">Same evaluator, 13 models, 5 basis points of cost per trade, p-values corrected for testing 13 models.</p>
+      <div class="table-wrap">
+        <table class="record" id="markets">
+          <thead><tr><th scope="col">Market</th><th scope="col">Best model</th><th scope="col">AUC</th><th scope="col">Hit rate (always up)</th><th scope="col">Verdict</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section id="method" class="band">
+    <div class="wrap two-col">
+      <div>
+        <h2>How it avoids fooling itself</h2>
+        <ul class="points">
+          <li><b>Walk-forward with a purge.</b> Every prediction comes from a model trained only on earlier data, with a gap so the last training target cannot peek into the test period.</li>
+          <li><b>Closed candles only.</b> The last candle a feed returns is usually still moving; using it leaks the future.</li>
+          <li><b>Scored against “always up”.</b> If prices rise 55% of the time, saying “up” every time is already 55% accurate, so accuracy alone proves nothing.</li>
+          <li><b>Corrected for many tries.</b> With 13 models, one looks significant by luck almost half the time; p-values are Holm-corrected.</li>
+          <li><b>An audit in CI.</b> On a random walk the verdict must be “no edge”, a planted signal must be found, and a leaked future value must make the AUC jump.</li>
+          <li><b>Settings fixed in advance.</b> Tuning hyperparameters on the results would be more tries to correct for.</li>
+        </ul>
+      </div>
+      <div>
+        <h2>How this page works</h2>
+        <ul class="points">
+          <li>Your browser downloads the last 1,000 candles of each market from Binance’s public API, drops the one still open and computes the same <b data-fill="n-features">28</b> features as the Python package.</li>
+          <li>Ridge and gradient boosting are exported from scikit-learn as plain numbers and trees, so the browser gets the same probabilities as Python. A test in CI checks that both agree.</li>
+          <li>The models are retrained every week on about two years of candles (<span data-fill="trained">…</span>). The page has no analytics; its only outside requests go to Binance for the candles.</li>
+        </ul>
+        <h2>Limitations</h2>
+        <ul class="points">
+          <li>Statistically real is not economically useful: the edge is small next to trading costs.</li>
+          <li>Two years of crypto data cover a limited set of market conditions; the next regime may behave differently.</li>
+          <li>The live numbers above are not a track record yet. The out-of-sample history is.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section id="run">
+    <div class="wrap">
+      <div class="section-head">
+        <h2>Run it on your computer</h2>
+        <p>All 13 models, the transformer, the market stages and the Streamlit app. Python 3.10 or newer; no account or API key.</p>
+      </div>
+      <div class="cta">
+        <a class="btn primary" href="https://github.com/YAYUUUN/updown/releases/latest">Download the latest release</a>
+        <a class="btn" href="https://github.com/YAYUUUN/updown">View on GitHub</a>
+      </div>
+      <div class="code">
+        <div class="code-head"><span>Install and check</span><button type="button" class="copy" data-copy="install">Copy</button></div>
+        <pre id="install"><code>git clone https://github.com/YAYUUUN/updown && cd updown
+python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -e ".[app]"                              # add ,deep for the transformer
+updown audit</code></pre>
+      </div>
+      <div class="code">
+        <div class="code-head"><span>Evaluate and explore</span><button type="button" class="copy" data-copy="use">Copy</button></div>
+        <pre id="use"><code>updown evaluate BTCUSDT,ETHUSDT --source binance --interval 15m --horizon 4
+updown evaluate SPY --interval 1d
+streamlit run app.py</code></pre>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap foot">
+    <span>MIT licence · © Jiajun Wang</span>
+    <span>Market data: Binance public API · Not financial advice</span>
+    <span id="generated"></span>
+  </div>
+</footer>
+</body>
+</html>

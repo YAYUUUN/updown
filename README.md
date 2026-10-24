@@ -6,7 +6,9 @@
 
 Most "price prediction" projects report a nice backtest. This one is built the other way round: first an evaluator that is hard to fool (and is tested to catch its own mistakes), then the models. In liquid markets the usual answer is "no demonstrated edge", and the tool says so.
 
-> Research and educational tool. **Not financial advice**, not a trading system. It does not place orders and the web app shows historical evaluation only.
+**Live demo: [yayuuun.github.io/updown](https://yayuuun.github.io/updown/).** Two of the models run in your browser on BTC, ETH and SOL, each probability next to that model's out-of-sample track record.
+
+> Research and educational tool. **Not financial advice**, not a trading system. It does not place orders.
 
 *Documentación en español: [README.es.md](README.es.md).*
 
@@ -89,6 +91,16 @@ The **web app** shows which stage each market is in right now (rule-based label 
 - **Ranking por etapa**: with the same selector over rule-based or HMM stages, which model validation picked in each block, how every candidate did out of sample in that stage, whether both rankings agree, and whether the per-stage model beats the single one.
 - **Confianza**: hit rate against the share of candles the model dares to predict, with its 95% interval.
 
+## Web demo
+
+[yayuuun.github.io/updown](https://yayuuun.github.io/updown/) is the static page in `web/`, served by GitHub Pages with no server behind it. Your browser downloads the last 1,000 15-minute candles of BTC, ETH and SOL from Binance, drops the one still open, computes the same features as `updown/features.py` (ported line by line to `web/js/features.js`) and runs `ridge` and `gradient_boosting`, which `updown/export.py` turns into plain coefficients and trees.
+
+- `python -m estudios.web_modelos` downloads about two years of candles, evaluates both models with the same purged walk-forward and writes `web/data/models.json` and `web/data/metrics.json`. The Pages workflow reruns it every Monday.
+- `python -m estudios.web_resultados` turns the tables in `estudios/resultados_*.md` into `web/data/results.json`, so no number on the page is typed by hand.
+- `tests/test_web.py` runs the JavaScript with Node and checks that its features and probabilities match Python's.
+
+To try it locally: `python -m http.server --directory web` and open http://localhost:8000.
+
 ## Models
 
 Baselines: `siempre_sube` (training up-frequency) and `momentum` (P(up | last candle up/down)).
@@ -145,7 +157,7 @@ Out of sample, the per-stage model is compared with the same procedure without s
 | Yahoo Finance via [`yfinance`](https://github.com/ranaroussi/yfinance) | stocks, ETFs, indices, FX, crypto | 1m: 7 days · 5–30m: 60 days · 1h: 730 days · 1d: full history |
 | Binance public REST API | crypto, real time | as far back as requested (paginated) |
 
-Binance candles also bring the number of trades and the taker-buy volume (order flow). Downloads are cached in `~/.cache/updown` (or `$UPDOWN_CACHE`); Binance updates fetch only new candles, and a cache written by an older version (without those columns) is downloaded again in full instead of being mixed with new candles. `yfinance` is an unofficial client intended for personal and research use: check Yahoo's terms before anything else. Binance is not available in every country. No market data is shipped with this repository.
+Binance candles also bring the number of trades and the taker-buy volume (order flow). Downloads are cached in `~/.cache/updown` (or `$UPDOWN_CACHE`); Binance updates fetch only new candles, and a cache written by an older version (without those columns) is downloaded again in full instead of being mixed with new candles. `yfinance` is an unofficial client intended for personal and research use: check Yahoo's terms before anything else. Binance is not available in every country; `UPDOWN_BINANCE_URL=https://data-api.binance.vision/api/v3/klines` uses its market-data mirror where `api.binance.com` does not answer. No market data is shipped with this repository (the web demo ships trained model parameters and metrics, not candles).
 
 ## Limitations
 
@@ -160,8 +172,9 @@ Binance candles also bring the number of trades and the taker-buy volume (order 
 ```
 updown/       data.py · features.py · regimes.py · hmm.py · models.py · transformer.py
               evaluate.py · candles.py · stages.py · confidence.py · predict.py · audit.py
-              __main__.py (CLI)
+              export.py (models for the web) · __main__.py (CLI)
 app.py        Streamlit app
+web/          static demo for GitHub Pages: index.html, js/ (features, models, page), data/
 estudios/     reproducible studies and their results
 tests/        offline test suite (synthetic data, mocked API)
 ```

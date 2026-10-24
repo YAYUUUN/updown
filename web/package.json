@@ -1,0 +1,6 @@
+{
+  "name": "updown-web",
+  "private": true,
+  "type": "module",
+  "description": "Static demo of updown for GitHub Pages: no build step, no dependencies."
+}

@@ -4,6 +4,8 @@ Herramienta para estimar la probabilidad de que un mercado cierre más arriba de
 
 La idea central viene de `qbt`: un número sin su historial fuera de muestra no vale nada. Por eso cada modelo se compara con dos referencias tontas y el veredicto es severo a propósito. En mercados líquidos, lo normal es que diga «sin ventaja demostrada», y así lo dice.
 
+**Demo en directo: [yayuuun.github.io/updown](https://yayuuun.github.io/updown/).** Dos de los modelos funcionan en tu navegador con BTC, ETH y SOL, cada probabilidad al lado del historial fuera de muestra de ese modelo.
+
 *Herramienta de investigación, no asesoramiento financiero.*
 
 ## Instalación
@@ -46,6 +48,16 @@ Muestra en qué escenario está cada mercado ahora (noticia/sobresalto, crisis, 
 - **Confianza**: la curva de acierto según cuánto se atreve a predecir, con su margen de error.
 
 Solo evaluación histórica. Necesita Streamlit 1.50 o posterior.
+
+## Demo en el navegador (GitHub Pages)
+
+La página estática de `web/` se publica en [yayuuun.github.io/updown](https://yayuuun.github.io/updown/) sin servidor detrás. El navegador descarga las últimas 1.000 velas de 15 minutos de BTC, ETH y SOL de Binance, quita la que sigue abierta, calcula las mismas variables que `updown/features.py` (copiadas línea a línea en `web/js/features.js`) y ejecuta `ridge` y `gradient_boosting`, que `updown/export.py` convierte en coeficientes y árboles.
+
+- `python -m estudios.web_modelos` descarga unos dos años de velas, evalúa los dos modelos con el mismo walk-forward purgado y escribe `web/data/models.json` y `web/data/metrics.json`. El workflow de Pages lo repite cada lunes.
+- `python -m estudios.web_resultados` pasa las tablas de `estudios/resultados_*.md` a `web/data/results.json`: ningún número de la página está escrito a mano.
+- `tests/test_web.py` ejecuta el JavaScript con Node y comprueba que las variables y las probabilidades coinciden con las de Python.
+
+Para probarla en local: `python -m http.server --directory web` y abre http://localhost:8000.
 
 ## Vela a vela y escenarios
 
@@ -91,6 +103,8 @@ Está escrito con numpy: `hmmlearn` no tiene ruedas para los Python recientes y 
 | Binance (API pública) | cripto en tiempo real (`BTCUSDT`) | 20.000 barras por defecto (`BINANCE_DEFAULT_BARS` en `updown/data.py`) |
 
 Solo se usan **barras cerradas**: la última suele estar abierta y predecir sobre ella es mirar el futuro a medias. Las barras diarias de bolsa se dan por cerradas 20 minutos después del cierre de sesión que publica Yahoo.
+
+Donde `api.binance.com` no responde (p. ej. desde servidores en EE. UU.), `UPDOWN_BINANCE_URL=https://data-api.binance.vision/api/v3/klines` usa su espejo de solo datos de mercado.
 
 Las velas de Binance traen además el **flujo de órdenes**: cuántas operaciones hubo y qué parte del volumen fueron compras agresivas (órdenes que compran al precio de venta en ese momento). La caché guarda una versión: una descarga antigua, sin esas columnas, se vuelve a pedir entera en vez de mezclarse con las nuevas.
 
