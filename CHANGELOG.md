@@ -3,6 +3,20 @@
 All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] - 2026-10-24
+
+### Added
+- Web demo on GitHub Pages (`web/`): BTC, ETH and SOL probabilities computed in the browser from Binance's
+  public candles with `ridge` and `gradient_boosting`, each next to that model's out-of-sample track record,
+  plus the study results as charts and a "run it on your computer" section. No server, no analytics.
+- `updown/export.py`: exports trained `ridge` and `gradient_boosting` models as plain JSON (coefficients and
+  trees) that give the same probabilities as scikit-learn.
+- `estudios/web_modelos.py` (evaluate, retrain and export the web models) and `estudios/web_resultados.py`
+  (study tables as JSON). A Pages workflow deploys the site and retrains the models every Monday.
+- `tests/test_web.py`: runs the page's JavaScript with Node and checks its features and probabilities
+  against Python. CI now sets up Node.
+- `UPDOWN_BINANCE_URL` to use Binance's market-data mirror where `api.binance.com` does not answer.
+
 ## [0.1.1] - 2026-10-23
 
 ### Fixed
