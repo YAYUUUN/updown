@@ -68,8 +68,9 @@
           <li><svg class="key" viewBox="0 0 14 14" aria-hidden="true"><rect x="3" y="2" width="8" height="10" rx="1" fill="var(--hit)"/></svg>Prediction right</li>
           <li><svg class="key" viewBox="0 0 14 14" aria-hidden="true"><rect x="3.5" y="2.5" width="7" height="9" rx="1" fill="none" stroke="var(--miss)" stroke-width="2"/></svg>Wrong</li>
           <li><svg class="key" viewBox="0 0 14 14" aria-hidden="true"><rect x="3.5" y="2.5" width="7" height="9" rx="1" fill="none" stroke="var(--muted)" stroke-dasharray="2 1.5"/></svg>Not decided yet</li>
+          <li><svg class="key" viewBox="0 0 14 14" aria-hidden="true"><defs><pattern id="hatch-key" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="4" height="4" fill="var(--band)"/><line x1="0" y1="0" x2="0" y2="4" stroke="var(--muted)" stroke-width="1.2"/></pattern></defs><rect x="1" y="3" width="12" height="8" rx="2" fill="url(#hatch-key)"/></svg>Stage uncertain (below 90%)</li>
         </ul>
-        <figcaption>Bottom strip: bars above the line predicted “up”, below it “down”; the longer the bar, the further the probability from 50%. “Up” means the candle closes above the previous close.</figcaption>
+        <figcaption>Top ribbon: the market stage after each candle. Bottom strip: bars above the line predicted “up”, below it “down”; the longer the bar, the further the probability from 50%. “Up” means the candle closes above the previous close.</figcaption>
       </figure>
       <details class="recent-details">
         <summary>Show these predictions as a table</summary>
@@ -148,12 +149,14 @@
           <li>Ridge and gradient boosting are exported from scikit-learn as plain numbers and trees, so the browser gets the same probabilities as Python. A test in CI checks that both agree.</li>
           <li>The models are retrained every week on about two years of candles (<span data-fill="trained">…</span>). The page has no analytics; its only outside requests go to Binance for the candles.</li>
           <li>The latest-candles chart scores each candle with the model that was published at the time (this week's or last week's) and skips candles that model had already seen while training.</li>
+          <li><b>Market stage.</b> A hidden Markov model learns from two years of candles a few states, each with its typical volatility (last day, against its past year) and 30-day trend, and how likely the market is to move between them. Each candle gets the probability of each stage given the candles up to it, never later ones; below 90% the stage is “uncertain”. Its past-year volatility reference is fixed at the weekly retrain, since the page does not download a year of candles.</li>
         </ul>
         <h2>Limitations</h2>
         <ul class="points">
           <li>Statistically real is not economically useful: the edge is small next to trading costs.</li>
           <li>Two years of crypto data cover a limited set of market conditions; the next regime may behave differently.</li>
           <li>The latest-candles chart is recomputed in your browser, not a log written when each prediction was made, and a few days of candles say little: the long out-of-sample history is the track record.</li>
+          <li>The stage probability is the model's own belief, not a verified frequency: a hidden state has nothing to check it against. Because it reads slow-moving inputs it is often close to 100%, and a stage is only noticed once it has started.</li>
         </ul>
       </div>
     </div>

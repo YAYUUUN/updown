@@ -129,3 +129,35 @@ def test_web_history_uses_the_model_published_at_each_candle(tmp_path):
         assert got["up"][~done].isna().all() and (~done).sum() == ahead  # las últimas aún no se saben
         assert (got["hit"][done].astype(bool) == ((got["p"][done] > 0.5) == got["up"][done].astype(bool))).all()
         assert (got["target"] - got["time"] == ahead * 900_000).all()
+
+
+@pytest.mark.skipif(NODE is None, reason="hace falta Node.js para ejecutar el JavaScript de la web")
+def test_web_stages_match_python(tmp_path):
+    """La etapa y su probabilidad en la web salen igual que en Python, con el mismo filtro hacia delante."""
+    from updown.export import WEB_DAY, WEB_MONTH, export_stage_hmm, web_hmm_observations
+    from updown.hmm import UNCERTAIN, StageHMM, vol_reference
+    rows = synthetic_klines(5000, seed=8)
+    bars = parse_binance_klines(rows)
+    train = bars.iloc[:4000]
+    obs_train = web_hmm_observations(train, *vol_reference(train))
+    model = StageHMM(n_states=3).fit(obs_train)
+    ref = vol_reference(train)
+    spec = {"hmm": export_stage_hmm(model), "ref": ref, "day": WEB_DAY, "month": WEB_MONTH}
+    (tmp_path / "klines.json").write_text(json.dumps(rows))
+    (tmp_path / "stages.json").write_text(json.dumps(spec))
+    res = subprocess.run([NODE, os.path.join(ROOT, "tests", "js", "stages.mjs"),
+                          str(tmp_path / "klines.json"), str(tmp_path / "stages.json")],
+                         capture_output=True, text=True, check=True)
+    js = json.loads(res.stdout)
+
+    obs = web_hmm_observations(bars, *ref)
+    for j, col in enumerate(("hmm_vol", "hmm_tend")):
+        got = np.array([np.nan if x is None else x for x in js["obs"][j]], dtype=float)
+        np.testing.assert_allclose(got, obs[col].to_numpy(), rtol=1e-9, atol=1e-12, err_msg=col)
+    expected = model.proba(obs)
+    for stage in expected.columns:
+        got = np.array([np.nan if x is None else x for x in js["probs"][stage]], dtype=float)
+        np.testing.assert_allclose(got, expected[stage].to_numpy(), rtol=0, atol=1e-9, err_msg=stage)
+    labels = model.labels(obs).replace({UNCERTAIN: "uncertain"})
+    assert [None if pd.isna(x) else x for x in labels] == js["label"]
+    assert obs["hmm_vol"].notna().sum() > 1000 and set(js["label"]) - {None} <= set(expected.columns) | {"uncertain"}

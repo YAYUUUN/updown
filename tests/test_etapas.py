@@ -180,3 +180,17 @@ def test_current_stage_is_the_last_candle_of_each_symbol():
     assert now.loc["A", "vela"] == a.index[-1] and now.loc["B", "vela"] == b.index[-1]
     probs = now.drop(columns=["etapa", "vela"]).astype(float)
     assert np.allclose(probs.sum(axis=1), 1.0)
+
+
+def test_stage_labels_by_period_do_not_look_ahead():
+    from updown.hmm import stage_labels_by_period
+    bars, _ = audit.stage_bars(n=2500, seed=11)
+    data = dataset(bars, "1d", regimes=True)
+    cuts = [data.index[1200], data.index[1700]]
+    labels = stage_labels_by_period(data, cuts)
+    assert labels[data.index < cuts[0]].isna().all() and labels[data.index >= cuts[0]].notna().all()
+    t = data.index[1900]                                   # cambiar lo posterior a t no mueve nada anterior
+    tampered = bars.copy()
+    tampered.loc[tampered.index > t, ["open", "high", "low", "close"]] *= 0.5
+    again = stage_labels_by_period(dataset(tampered, "1d", regimes=True), cuts)
+    pd.testing.assert_series_equal(labels.loc[:t], again.loc[:t])

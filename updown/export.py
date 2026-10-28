@@ -8,12 +8,18 @@ precisión:
 
 La web (web/js/models.js) repite exactamente estas cuentas; tests/test_web.py
 comprueba que las variables y las probabilidades coinciden con las de Python.
+
+También se exporta el HMM de las etapas (medias, covarianzas, transiciones y nombres)
+para que la web diga en qué etapa está cada mercado y con qué probabilidad
+(web/js/stages.js), con el mismo filtro hacia delante que `updown/hmm.py`.
 """
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
 from sklearn.ensemble import HistGradientBoostingClassifier
 
+from .hmm import StageHMM
 from .models import PlattModel, PriorModel, SklearnModel
 
 WEB_MODELS = ("ridge", "gradient_boosting")
@@ -70,6 +76,30 @@ def _hist_gradient_boosting(est: HistGradientBoostingClassifier, columns: list[s
         "base": float(np.ravel(est._baseline_prediction)[0]),
         "trees": trees,
     }
+
+
+# Velas de 15 minutos: un día y 30 días, las ventanas de `regime_inputs` con datos continuos.
+WEB_DAY, WEB_MONTH = 96, 2880
+
+
+def export_stage_hmm(model: StageHMM) -> dict:
+    """El HMM de etapas ya ajustado, con un nombre por estado (puede repetirse) y el umbral."""
+    h = model.hmm_
+    return {"names": list(model.names_), "threshold": model.threshold, "startprob": h.startprob_.tolist(),
+            "transmat": h.transmat_.tolist(), "means": h.means_.tolist(), "covars": h.covars_.tolist()}
+
+
+def web_hmm_observations(bars: pd.DataFrame, mu: float, sd: float, day: int = WEB_DAY,
+                         month: int = WEB_MONTH) -> pd.DataFrame:
+    """Las observaciones del HMM como las calcula la web: ventanas fijas y la referencia
+    de volatilidad (`mu`, `sd`, de `hmm.vol_reference`) fija desde el entrenamiento."""
+    c = bars["close"]
+    vol = np.log(c).diff().rolling(day).std()
+    logvol = np.log(vol.where(vol > 0))
+    out = pd.DataFrame(index=bars.index)
+    out["hmm_vol"] = ((logvol - mu) / sd).clip(-5, 5)
+    out["hmm_tend"] = (np.log(c / c.shift(month)) / (vol * np.sqrt(month))).clip(-5, 5)
+    return out.replace([np.inf, -np.inf], np.nan)
 
 
 def tree_proba(spec: dict, X: np.ndarray) -> np.ndarray:

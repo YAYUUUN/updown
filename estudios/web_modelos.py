@@ -10,6 +10,9 @@
 4. Entrena y exporta también los que se habrían publicado una semana antes (solo con
    lo que se sabía entonces). Con ellos la web enseña, vela a vela, qué predijo el
    modelo publicado en cada momento, también justo después del reentreno semanal.
+5. Ajusta el HMM de etapas (también el de una semana antes) con la referencia de
+   volatilidad de cada activo, y mide el acierto fuera de muestra de cada modelo en
+   cada etapa, con etapas puestas por un HMM que en cada bloque solo vio lo anterior.
 
 Escribe web/data/models.json y web/data/metrics.json. Con
 UPDOWN_BINANCE_URL=https://data-api.binance.vision/api/v3/klines funciona también
@@ -28,9 +31,11 @@ import pandas as pd
 
 from updown import Market, load_pooled
 from updown.candles import evaluate_candles, targets_of
-from updown.export import WEB_MODELS, export_model
+from updown.export import WEB_DAY, WEB_MODELS, WEB_MONTH, export_model, export_stage_hmm
 from updown.features import feature_columns
+from updown.hmm import StageHMM, stage_labels_by_period, vol_reference
 from updown.models import make_model
+from updown.predict import load_bars
 
 warnings.filterwarnings("ignore")
 
@@ -64,6 +69,44 @@ def _write(path: str, obj: dict) -> None:
     os.replace(tmp, path)
 
 
+def stage_set(data: pd.DataFrame, bars: dict, until: pd.Timestamp) -> dict | None:
+    """El HMM de etapas ajustado con lo conocido hasta `until`, con la referencia de volatilidad de cada activo."""
+    try:
+        model = StageHMM().fit(data[data.index <= until])
+    except ValueError as exc:  # muy poco histórico (hace falta ~1 mes de calentamiento)
+        print(f"[aviso] sin HMM de etapas hasta {until}: {exc}")
+        return None
+    ref = {s: list(vol_reference(b[b.index <= until])) for s, b in bars.items()}
+    return {"hmm": export_stage_hmm(model), "vol_ref": ref, "day": WEB_DAY, "month": WEB_MONTH}
+
+
+def stage_track_record(data: pd.DataFrame, rep) -> dict | None:
+    """Acierto fuera de muestra de cada modelo en cada etapa del HMM, para cada objetivo.
+
+    La etapa de cada vela de prueba la pone un HMM ajustado solo con las velas anteriores
+    a su bloque del walk-forward, con probabilidades filtradas.
+    """
+    base = rep.oos[("siempre_sube", rep.targets[0])]
+    starts = base.reset_index().groupby("fold")[base.index.name or "index"].min()
+    try:
+        stage = stage_labels_by_period(data, starts.tolist())
+    except ValueError as exc:
+        print(f"[aviso] sin acierto por etapa: {exc}")
+        return None
+    stage.index = pd.MultiIndex.from_arrays([data.index, data["symbol"]])
+    out = {}
+    for name in rep.targets:
+        out[name] = {}
+        for m in ("siempre_sube", *WEB_MODELS):
+            o = rep.oos[(m, name)]
+            g = pd.DataFrame({"stage": stage.reindex(pd.MultiIndex.from_arrays([o.index, o["symbol"]])).to_numpy(),
+                              "hit": ((o["p"] > 0.5) == (o["up"] == 1)).to_numpy(), "up": o["up"].to_numpy()})
+            g = g.dropna(subset=["stage"])
+            out[name][m] = {s: {"n": len(x), "acierto": _plain(x["hit"].mean()), "freq_sube": _plain(x["up"].mean())}
+                            for s, x in g.groupby("stage")}
+    return {"from": str(starts.min()), "threshold": 0.9, "targets": out}
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--bars", type=int, default=BARS, help="velas por activo (70.000 ≈ 2 años)")
@@ -72,7 +115,7 @@ def main() -> None:
 
     t0 = time.time()
     markets = [Market("binance", s, INTERVAL) for s in SYMBOLS]
-    data = load_pooled(markets, horizon=4, bars=args.bars, candles=4)
+    data = load_pooled(markets, horizon=4, bars=args.bars, candles=4, regimes=True)
     cols = feature_columns(data)
     print(f"{len(data)} filas, {len(cols)} variables ({time.time() - t0:.0f} s)")
 
@@ -101,15 +144,22 @@ def main() -> None:
                          for m in rep.meta["modelos"]}
     print(f"modelos finales {time.time() - t2:.0f} s")
 
+    t3 = time.time()
+    bars = {m.symbol: load_bars(m, bars=args.bars) for m in markets}
+    stages_now, stages_then = stage_set(data, bars, data_to), stage_set(data, bars, previous_to)
+    by_stage = stage_track_record(data, rep)
+    print(f"etapas {time.time() - t3:.0f} s")
+
     common = {"generated": generated, "interval": INTERVAL, "symbols": SYMBOLS, "rows": len(data)}
     _write(os.path.join(args.out, "models.json"), {
         **common, "features": cols,
         "trained_from": str(data.index.min()), "trained_to": str(data[data["up"].notna()].index.max()),
-        "data_to": data_to.isoformat(), "targets": targets,
-        "previous": {"data_to": previous_to.isoformat(), "targets": previous},
+        "data_to": data_to.isoformat(), "targets": targets, "stages": stages_now,
+        "previous": {"data_to": previous_to.isoformat(), "targets": previous, "stages": stages_then},
     })
     _write(os.path.join(args.out, "metrics.json"), {
         **common, "oos_from": rep.meta["desde"], "oos_to": rep.meta["hasta"], "folds": 6, "targets": metrics,
+        "by_stage": by_stage,
     })
     print("Guardado en", os.path.abspath(args.out), f"({time.time() - t0:.0f} s)")
 

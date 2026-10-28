@@ -97,6 +97,7 @@ The **web app** shows which stage each market is in right now (rule-based label 
 
 - `python -m estudios.web_modelos` downloads about two years of candles, evaluates both models with the same purged walk-forward and writes `web/data/models.json` and `web/data/metrics.json`. The Pages workflow reruns it every Monday.
 - **Latest candles.** The page draws the last 12 hours to 3 days of candles with the prediction made for each one and whether it was right. Each candle uses the model published at the time: `models.json` carries the current models and the ones from a week earlier, each with the last candle it saw, and a candle only counts if that model had not seen it. The predictions are recomputed in your browser, not logged when they were made; `updown live` keeps that kind of log.
+- **Market stage.** Each market card and the chart show the stage the hidden Markov model of `updown/hmm.py` sees (calm, bull, bear, sideways, crisis or volatile) with its filtered probability, "uncertain" below 90%, and each model's out-of-sample hit rate in that stage. The page computes the same observations and forward filter as Python (a test checks both agree); only the past-year volatility reference is fixed at the weekly retrain, because the page downloads about 5,000 candles, not a year.
 - `python -m estudios.web_resultados` turns the tables in `estudios/resultados_*.md` into `web/data/results.json`, so no number on the page is typed by hand.
 - `tests/test_web.py` runs the JavaScript with Node and checks that its features and probabilities match Python's.
 

@@ -1,8 +1,9 @@
 // La página: resultados de los estudios (data/results.json), historial fuera de muestra de
 // los modelos de la web (data/metrics.json) y P(sube) en directo con velas de Binance.
 import { buildFeatures, dropUnclosed, featureRow, INTERVAL_MS, parseKlines } from "./features.js";
-import { dataTo, history, hitSummary } from "./history.js";
+import { dataTo, history, hitSummary, modelSets } from "./history.js";
 import { predict } from "./models.js";
+import { filterStages, hmmObservations } from "./stages.js";
 
 const API = ["https://data-api.binance.vision", "https://api.binance.com"];
 const LIVE_MODELS = ["gradient_boosting", "ridge"];
@@ -32,6 +33,13 @@ const MARKETS = [
 ];
 
 const WINDOWS = [[48, "12 h"], [96, "24 h"], [288, "3 days"]];
+// La tendencia de la etapa mira 30 días atrás: hacen falta ~5.000 velas, no las 1.000 de una petición.
+const HISTORY_BARS = 4800;
+const STAGES = {
+  calma: "Calm", alcista: "Bull", bajista: "Bear", lateral: "Sideways", crisis: "Crisis", volatil: "Volatile",
+  uncertain: "Uncertain",
+};
+const stageKey = (s) => (s === "uncertain" ? "incierta" : s);  // así se llama en metrics.json
 
 const state = {
   target: "vela_1", models: null, metrics: null, live: null, error: null, offset: 0, next: 0, api: 0,
@@ -140,10 +148,41 @@ function renderCards() {
       `<span class="model-name"><i class="dot" style="background:var(--m-${k})"></i>${MODEL_NAMES[k]}</span>` +
       `<span class="prob">${pct(probs[k])}<small>up</small></span></div>${meter(probs[k], `var(--m-${k})`)}</div>`).join("");
     const resolves = live.time + INTERVAL_MS * (t.ahead + 1);
-    return `<article class="card">${head}${rows}` +
+    return `<article class="card">${head}${stageLine(live)}${rows}` +
       `<div class="meter-scale" aria-hidden="true"><span>40%</span><span>50%</span><span>60%</span></div>` +
-      `<p class="baseline">“Always up” says ${pct(probs.siempre_sube)} · resolves at ${clock(resolves)}</p></article>`;
+      `<p class="baseline">“Always up” says ${pct(probs.siempre_sube)} · resolves at ${clock(resolves)}</p>` +
+      `${stageRecord(live)}</article>`;
   }).join("");
+}
+
+/** La etapa de ahora con lo segura que está; si ninguna llega al umbral, «uncertain» y las dos más probables. */
+function stageLine(live) {
+  const st = stageAt(live, live.bars.time.length - 1);
+  if (!st) {
+    const why = live.stages?.length ? "not enough recent candles." : "shown after the next weekly model update.";
+    return `<p class="stage muted">Market stage: ${why}</p>`;
+  }
+  const [first, second] = st.probs;
+  const shown = st.probs.filter(([, p]) => p >= 0.005);   // el desglose solo si hay más de una etapa con peso
+  const others = shown.length > 1 ? shown.map(([s, p]) => `${STAGES[s] ?? s} ${pct(p, 0)}`).join(" · ") : "";
+  const main = st.label === "uncertain"
+    ? `<b>Uncertain</b> <span class="muted">between ${STAGES[first[0]]} and ${STAGES[second?.[0]] ?? "–"}</span>`
+    : `<b>${STAGES[st.label] ?? st.label}</b> <span class="muted">· ${pct(first[1], 0)} sure</span>`;
+  return `<div class="stage"><p><span class="stage-k">Market stage</span> ${main}</p>` +
+    (others ? `<p class="stage-probs">${others}</p>` : "") + "</div>";
+}
+
+/** Cuánto acertó cada modelo, fuera de muestra, en las velas de esta misma etapa. */
+function stageRecord(live) {
+  const st = stageAt(live, live.bars.time.length - 1);
+  const rec = state.metrics?.by_stage?.targets?.[state.target];
+  if (!st || !rec) return "";
+  const key = stageKey(st.label);
+  const parts = LIVE_MODELS.filter((m) => rec[m]?.[key]).map((m) => `${MODEL_NAMES[m].toLowerCase()} ${pct(rec[m][key].acierto)}`);
+  const n = rec[LIVE_MODELS[0]]?.[key]?.n;
+  if (!parts.length || !n) return "";
+  const where = st.label === "uncertain" ? "when the stage was uncertain" : `in ${STAGES[st.label].toLowerCase()} markets`;
+  return `<p class="baseline">Out of sample ${where}: ${parts.join(", ")} right (${int(n)} candles)</p>`;
 }
 
 function renderStatus() {
@@ -166,6 +205,47 @@ function renderStatus() {
     (stale ? " Binance's latest candle is older than expected." : ` Next update in ${mmss}.`);
 }
 
+/** Las últimas `total` velas: la primera vez paginando hacia atrás, luego solo lo nuevo. */
+async function klines(sym, interval, total) {
+  const base = `/api/v3/klines?symbol=${sym}&interval=${interval}`;
+  let rows = state.rows?.[sym];
+  if (rows?.length) {
+    rows = rows.concat(await binance(`${base}&limit=1000`));   // parseKlines se queda con la última versión de cada vela
+  } else {
+    rows = [];
+    let end = null;
+    while (rows.length < total) {
+      const page = await binance(`${base}&limit=1000${end ? `&endTime=${end}` : ""}`);
+      if (!page.length) break;
+      rows = page.concat(rows);
+      end = page[0][0] - 1;
+      if (page.length < 1000) break;
+    }
+  }
+  rows = rows.slice(-total - 1000);
+  (state.rows ??= {})[sym] = rows;
+  return rows;
+}
+
+/** Etapa de cada vela con cada juego de modelos que traiga HMM (el actual y el de la semana anterior). */
+function stagesFor(sym, bars) {
+  return modelSets(state.models).filter((s) => s.stages?.vol_ref?.[sym]).map((s) => ({
+    source: s.source, from: s.from,
+    ...filterStages(s.stages.hmm, hmmObservations(bars, s.stages.vol_ref[sym], s.stages.day, s.stages.month)),
+  }));
+}
+
+/** La etapa de la vela k según el HMM publicado entonces (el más antiguo para velas anteriores). */
+function stageAt(live, k) {
+  const sets = live.stages;
+  if (!sets?.length) return null;
+  const set = sets.find((s) => live.bars.time[k] >= s.from) ?? sets[sets.length - 1];
+  const label = set.label[k];
+  if (!label) return null;
+  const probs = set.stages.map((s) => [s, set.probs[s][k]]).sort((a, b) => b[1] - a[1]);
+  return { label, probs, source: set.source };
+}
+
 async function refresh() {
   clearTimeout(state.timer);
   const models = state.models;
@@ -174,7 +254,7 @@ async function refresh() {
     state.offset = serverTime - Date.now();
     const live = {};
     await Promise.all(models.symbols.map(async (sym) => {
-      const rows = await binance(`/api/v3/klines?symbol=${sym}&interval=${models.interval}&limit=1000`);
+      const rows = await klines(sym, models.interval, HISTORY_BARS);
       const bars = dropUnclosed(parseKlines(rows), serverTime);
       const i = bars.time.length - 1;
       if (i < 0) return;
@@ -188,7 +268,7 @@ async function refresh() {
           for (const [name, spec] of Object.entries(target.models)) probs[target.name][name] = predict(spec, row);
         }
       }
-      live[sym] = { time: bars.time[i], close: bars.close[i], probs, bars, features };
+      live[sym] = { time: bars.time[i], close: bars.close[i], probs, bars, features, stages: stagesFor(sym, bars) };
     }));
     state.live = live;
     state.error = null;
@@ -249,6 +329,21 @@ function recentSummary(sym, rows, firstShown) {
     `${pct(s.lo, 0)}–${pct(s.hi, 0)}). ${s.ups} of them closed up, so “always up” would have scored ${pct(s.ups / s.n)}.`;
   if (s.lo <= 0.5 && s.hi >= 0.5) text += " With this few candles that is compatible with a coin flip; the long track record below is what counts.";
   if (firstShown > 0) text += ` The first ${firstShown} candles of the window are not scored: the model had already seen them.`;
+  const live = state.live?.[sym];
+  if (live?.stages?.length) {
+    const by = new Map();
+    for (const x of rows) {
+      if (x.hit === null) continue;
+      const st = stageAt(live, x.index)?.label;
+      if (!st) continue;
+      const c = by.get(st) ?? { k: 0, n: 0 };
+      c.n += 1;
+      c.k += x.hit ? 1 : 0;
+      by.set(st, c);
+    }
+    const parts = [...by].sort((a, b) => b[1].n - a[1].n).map(([s, c]) => `${STAGES[s] ?? s} ${c.k} of ${c.n}`);
+    if (parts.length) text += `<br><span class="muted">Right by stage when it predicted: ${parts.join(" · ")}.</span>`;
+  }
   return text;
 }
 
@@ -263,8 +358,9 @@ function recentChart(sym, live, rows) {
   const byTarget = new Map(rows.map((x) => [x.index + ahead, x]));
   // Al ancho real del recuadro: así el texto mide 12 px también en el móvil.
   const W = Math.max(300, Math.round(($("#chart-recent").clientWidth || 744) - 26));
-  const L = 6, R = 66, T = 24, PH = 220, GAP = 16, LH = 58, B = 28;
-  const H = T + PH + GAP + LH + B;
+  const L = 6, R = 66, T = 24, RIB = live.stages?.length ? 18 : 0, PH = 220, GAP = 16, LH = 58, B = 28;
+  const PT = T + RIB + (RIB ? 8 : 0);       // arriba del panel de precios
+  const H = PT + PH + GAP + LH + B;
   const slot = (W - L - R) / slots;
   const bw = Math.max(1, Math.min(slot * 0.62, 12));
   const cx = (s) => L + (s + 0.5) * slot;
@@ -272,8 +368,30 @@ function recentChart(sym, live, rows) {
   for (let k = k0; k < n; k++) { lo = Math.min(lo, bars.low[k]); hi = Math.max(hi, bars.high[k]); }
   const pad = (hi - lo) * 0.06 || hi * 0.001;
   lo -= pad; hi += pad;
-  const y = (v) => T + PH * (1 - (v - lo) / (hi - lo));
-  let g = "";
+  const y = (v) => PT + PH * (1 - (v - lo) / (hi - lo));
+  let g = `<defs><pattern id="hatch" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">` +
+    `<rect width="5" height="5" fill="var(--band)"/><line x1="0" y1="0" x2="0" y2="5" stroke="var(--muted)" stroke-width="1.2"/>` +
+    `</pattern></defs>`;
+
+  // etapa del mercado en cada vela: tramos seguidos con su nombre; rayado si es incierta
+  if (RIB) {
+    let s0 = 0;
+    for (let s = 1; s <= N; s++) {
+      const cur = stageAt(live, k0 + s0)?.label;
+      if (s < N && stageAt(live, k0 + s)?.label === cur) continue;
+      if (cur) {
+        const x0 = L + s0 * slot, w = (s - s0) * slot;
+        g += `<rect class="${cur === "uncertain" ? "rib unsure" : "rib"}" x="${(x0 + 1).toFixed(1)}" y="${T}" ` +
+          `width="${Math.max(w - 2, 0.5).toFixed(1)}" height="${RIB}" rx="3"/>`;
+        const name = STAGES[cur] ?? cur;
+        if (w >= name.length * 7 + 12 && cur !== "uncertain") {
+          g += `<text class="rib-label" x="${(x0 + w / 2).toFixed(1)}" y="${T + RIB / 2 + 4}" text-anchor="middle">${name}</text>`;
+        }
+      }
+      s0 = s;
+    }
+    g += `<text x="${W - R + 8}" y="${T + RIB / 2 + 4}">stage</text>`;
+  }
 
   // ejes: precios a la derecha, cuadrícula fina
   const rough = (hi - lo) / 4;
@@ -302,7 +420,7 @@ function recentChart(sym, live, rows) {
   let lastLabelX = -Infinity;
   for (const [s, label] of marks) {
     const xx = (L + s * slot).toFixed(1);
-    g += `<line class="edge" x1="${xx}" x2="${xx}" y1="${T - 6}" y2="${T + PH + GAP + LH}"/>`;
+    g += `<line class="edge" x1="${xx}" x2="${xx}" y1="${T - 6}" y2="${PT + PH + GAP + LH}"/>`;
     if (+xx - lastLabelX > 170 && +xx < W - R - 60) {
       g += `<text class="note" x="${+xx + 5}" y="${T - 10}">${label}</text>`;
       lastLabelX = +xx;
@@ -321,10 +439,10 @@ function recentChart(sym, live, rows) {
   }
 
   // franja de predicciones: arriba = dijo que subía, abajo = que bajaba; largo = distancia al 50 %
-  const y0 = T + PH + GAP + LH / 2;
+  const y0 = PT + PH + GAP + LH / 2;
   g += `<line class="grid" x1="${L}" x2="${W - R}" y1="${y0}" y2="${y0}"/>`;
-  g += `<text x="${W - R + 8}" y="${T + PH + GAP + 9}">60%</text><text x="${W - R + 8}" y="${y0 + 4}">50%</text>` +
-    `<text x="${W - R + 8}" y="${T + PH + GAP + LH}">40%</text>`;
+  g += `<text x="${W - R + 8}" y="${PT + PH + GAP + 9}">60%</text><text x="${W - R + 8}" y="${y0 + 4}">50%</text>` +
+    `<text x="${W - R + 8}" y="${PT + PH + GAP + LH}">40%</text>`;
   for (let s = 0; s < slots; s++) {
     const x = byTarget.get(k0 + s);
     if (!x) continue;
@@ -335,7 +453,8 @@ function recentChart(sym, live, rows) {
     g += `<rect class="${cls}" x="${(cx(s) - bw / 2 + inset).toFixed(1)}" y="${(yy + inset).toFixed(1)}" ` +
       `width="${Math.max(bw - 2 * inset, 0.8).toFixed(1)}" height="${Math.max(h - 2 * inset, 1).toFixed(1)}" rx="1"/>`;
   }
-  g += `<rect class="cursor" id="recent-cursor" x="0" y="${T - 6}" width="${slot.toFixed(2)}" height="${PH + GAP + LH + 6}" visibility="hidden"/>`;
+  g += `<rect class="cursor" id="recent-cursor" x="0" y="${T - 6}" width="${slot.toFixed(2)}" ` +
+    `height="${PT - T + PH + GAP + LH + 6}" visibility="hidden"/>`;
   const label = `${symLabel(sym)} 15-minute candles for the last ${N} periods, with the prediction made for each one and whether it was right`;
   return { svg: svg(W, H, g, label), geom: { W, L, slot, slots, k0, n, ahead, byTarget } };
 }
@@ -349,6 +468,11 @@ function tipHTML(sym, live, geom, s) {
   let h = `<b>${symLabel(sym)} · ${clock(start)}–${clock(start + INTERVAL_MS)}</b>`;
   if (closed) h += `<br>Open ${priceFmt(bars.open[k])} · close ${priceFmt(bars.close[k])}`;
   else h += "<br>Candle not closed yet";
+  const st = closed ? stageAt(live, k) : null;
+  if (st) {
+    const top = st.probs.slice(0, st.label === "uncertain" ? 2 : 1).map(([s, p]) => `${STAGES[s] ?? s} ${pct(p, 0)}`).join(", ");
+    h += `<br>Stage: <b>${STAGES[st.label] ?? st.label}</b> (${top})`;
+  }
   if (!x) return h + "<br><span class=\"muted\">Not scored: the model had already seen this candle.</span>";
   const said = x.p > 0.5 ? "up" : "down";
   h += `<br>${MODEL_NAMES[state.recent.model]} said <b>${said}</b> (P(up) ${pct(x.p)}) when the ${clock(x.time)} candle closed`;

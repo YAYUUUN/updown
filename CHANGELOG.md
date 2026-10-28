@@ -16,6 +16,15 @@ All notable changes to this project are documented here. The format follows
   week of history right after the weekly retrain. Older `models.json` files still work.
 - `tests/test_web.py` checks the page's history against Python: no prediction for a candle the model had seen,
   the right model for each period and the same probabilities and outcomes.
+- Web demo: the market stage of BTC, ETH and SOL (calm, bull, bear, sideways, crisis or volatile) with how sure the
+  hidden Markov model is, a stage ribbon over the latest candles (hatched when no stage reaches 90%), the hit rate
+  by stage in the window and each model's out-of-sample hit rate in the current stage. The page now downloads
+  about 5,000 candles per market (30 days of trend need them) and then only the new ones (`web/js/stages.js`).
+- `updown/export.py` exports the stage HMM and computes its observations as the page does, with the past-year
+  volatility reference fixed at training (`hmm.vol_reference`); `estudios/web_modelos.py` exports it for the
+  current and the previous week and measures each model's out-of-sample hit rate by stage, with stages from an
+  HMM fitted only on earlier data in each walk-forward block (`hmm.stage_labels_by_period`). A test checks the
+  page's stage probabilities against Python.
 
 ## [0.2.0] - 2026-10-24
 

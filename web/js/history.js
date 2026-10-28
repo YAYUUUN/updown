@@ -24,8 +24,11 @@ export function dataTo(set) {
 
 /** Los juegos de modelos disponibles, del más reciente al más antiguo. */
 export function modelSets(models) {
-  const sets = [{ source: "current", from: dataTo(models), targets: models.targets }];
-  if (models.previous) sets.push({ source: "previous", from: dataTo(models.previous), targets: models.previous.targets });
+  const sets = [{ source: "current", from: dataTo(models), targets: models.targets, stages: models.stages ?? null }];
+  if (models.previous) {
+    sets.push({ source: "previous", from: dataTo(models.previous), targets: models.previous.targets,
+      stages: models.previous.stages ?? null });
+  }
   return sets;
 }
 

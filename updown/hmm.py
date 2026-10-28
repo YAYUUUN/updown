@@ -60,19 +60,35 @@ STATE_LABELS = {
 }
 
 
-def hmm_observations(bars: pd.DataFrame, inputs: pd.DataFrame | None = None) -> pd.DataFrame:
-    """Observaciones del HMM para cada vela, calculadas solo con el pasado."""
-    x = regime_inputs(bars) if inputs is None else inputs
+def _log_vol_year(bars: pd.DataFrame, x: pd.DataFrame):
+    """Log de la volatilidad diaria y su media y desviación móviles del último año (incluida la vela)."""
     bpd = bars_per_day(bars.index)
     month = max(round(30 * bpd), 20)
     year = max(round(365 * bpd), 250)
     logvol = np.log(x["vol"].where(x["vol"] > 0))
-    mu = logvol.rolling(year, min_periods=month).mean().shift(1)
-    sd = logvol.rolling(year, min_periods=month).std().shift(1)
+    rolling = logvol.rolling(year, min_periods=month)
+    return logvol, rolling.mean(), rolling.std(), month
+
+
+def hmm_observations(bars: pd.DataFrame, inputs: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Observaciones del HMM para cada vela, calculadas solo con el pasado."""
+    x = regime_inputs(bars) if inputs is None else inputs
+    logvol, mean, std, month = _log_vol_year(bars, x)
+    mu, sd = mean.shift(1), std.shift(1)
     out = pd.DataFrame(index=bars.index)
     out["hmm_vol"] = ((logvol - mu) / sd).clip(-5, 5)
     out["hmm_tend"] = (x["tendencia"] / (x["vol"] * np.sqrt(month))).clip(-5, 5)
     return out.replace([np.inf, -np.inf], np.nan)
+
+
+def vol_reference(bars: pd.DataFrame) -> tuple[float, float]:
+    """Media y desviación del log de la volatilidad en el último año hasta la última vela.
+
+    Es la referencia con la que `hmm_observations` puntúa la vela siguiente. La web la
+    recibe fija al entrenar, porque el navegador no descarga un año de velas.
+    """
+    _, mean, std, _ = _log_vol_year(bars, regime_inputs(bars))
+    return float(mean.iloc[-1]), float(std.iloc[-1])
 
 
 class GaussianHMM:
@@ -313,3 +329,21 @@ def current_stages(data: pd.DataFrame, n_states: int = 4, threshold: float = 0.9
         last = pos[np.argmax(times[pos])]
         rows[s] = {**P.iloc[last].to_dict(), "etapa": labels.iloc[last], "vela": data.index[last]}
     return pd.DataFrame.from_dict(rows, orient="index")
+
+
+def stage_labels_by_period(data: pd.DataFrame, cuts, n_states: int = 4, threshold: float = 0.9) -> pd.Series:
+    """Etapa de cada fila a partir del primer corte, con un HMM ajustado solo con lo anterior a su periodo.
+
+    Para el periodo [corte_i, corte_i+1) el HMM se ajusta con las filas anteriores a corte_i
+    y las etiquetas son filtradas: ninguna mira lo que vino después. Sirve para medir el
+    acierto de un modelo en cada etapa sobre predicciones fuera de muestra.
+    """
+    cuts = sorted(pd.Timestamp(c) for c in cuts)
+    out = np.full(len(data), np.nan, dtype=object)
+    ends = [*cuts[1:], data.index.max() + pd.Timedelta(1, "ns")]
+    for start, end in zip(cuts, ends, strict=True):
+        model = StageHMM(n_states, threshold).fit(data[data.index < start])
+        labels = model.labels(data).to_numpy(object)
+        inside = np.asarray((data.index >= start) & (data.index < end))
+        out[inside] = labels[inside]
+    return pd.Series(out, index=data.index, name="etapa_hmm")
