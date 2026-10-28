@@ -3,6 +3,20 @@
 All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- Web demo: "How it did on the latest candles", a 15-minute candlestick chart of BTC, ETH and SOL with the
+  prediction made for each candle and whether it was right, a hover tooltip (also with the arrow keys), a table
+  view and the hit rate of the last days per market and model, with its 95% interval. Each candle uses the model
+  that was published at the time, and only candles that model had not seen while training are scored
+  (`web/js/history.js`).
+- `estudios/web_modelos.py` also exports the models that would have been published a week earlier
+  (`previous` in `models.json`) and the last candle the models have seen (`data_to`), so the chart keeps a
+  week of history right after the weekly retrain. Older `models.json` files still work.
+- `tests/test_web.py` checks the page's history against Python: no prediction for a candle the model had seen,
+  the right model for each period and the same probabilities and outcomes.
+
 ## [0.2.0] - 2026-10-24
 
 ### Added

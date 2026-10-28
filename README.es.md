@@ -4,7 +4,7 @@ Herramienta para estimar la probabilidad de que un mercado cierre más arriba de
 
 La idea central viene de `qbt`: un número sin su historial fuera de muestra no vale nada. Por eso cada modelo se compara con dos referencias tontas y el veredicto es severo a propósito. En mercados líquidos, lo normal es que diga «sin ventaja demostrada», y así lo dice.
 
-**Demo en directo: [yayuuun.github.io/updown](https://yayuuun.github.io/updown/).** Dos de los modelos funcionan en tu navegador con BTC, ETH y SOL, cada probabilidad al lado del historial fuera de muestra de ese modelo.
+**Demo en directo: [yayuuun.github.io/updown](https://yayuuun.github.io/updown/).** Dos de los modelos funcionan en tu navegador con BTC, ETH y SOL, cada probabilidad al lado del historial fuera de muestra de ese modelo, y un gráfico de velas de las últimas horas con lo que se predijo en cada una y si acertó.
 
 *Herramienta de investigación, no asesoramiento financiero.*
 
@@ -54,6 +54,7 @@ Solo evaluación histórica. Necesita Streamlit 1.50 o posterior.
 La página estática de `web/` se publica en [yayuuun.github.io/updown](https://yayuuun.github.io/updown/) sin servidor detrás. El navegador descarga las últimas 1.000 velas de 15 minutos de BTC, ETH y SOL de Binance, quita la que sigue abierta, calcula las mismas variables que `updown/features.py` (copiadas línea a línea en `web/js/features.js`) y ejecuta `ridge` y `gradient_boosting`, que `updown/export.py` convierte en coeficientes y árboles.
 
 - `python -m estudios.web_modelos` descarga unos dos años de velas, evalúa los dos modelos con el mismo walk-forward purgado y escribe `web/data/models.json` y `web/data/metrics.json`. El workflow de Pages lo repite cada lunes.
+- **Últimas velas.** La página dibuja de 12 horas a 3 días de velas con la predicción que se hizo para cada una y si acertó. Cada vela usa el modelo publicado en ese momento: `models.json` lleva los modelos actuales y los de una semana antes, cada uno con la última vela que vio, y una vela solo cuenta si ese modelo no la había visto. Las predicciones se recalculan en tu navegador, no se apuntaron cuando se hicieron; ese registro lo lleva `updown live`.
 - `python -m estudios.web_resultados` pasa las tablas de `estudios/resultados_*.md` a `web/data/results.json`: ningún número de la página está escrito a mano.
 - `tests/test_web.py` ejecuta el JavaScript con Node y comprueba que las variables y las probabilidades coinciden con las de Python.
 

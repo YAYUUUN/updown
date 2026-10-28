@@ -7,6 +7,9 @@
    walk-forward purgado que `estudios.velas_regimenes`. Es el historial que la web
    enseña al lado de cada probabilidad.
 3. Entrena los modelos finales con todo el histórico etiquetado y los exporta.
+4. Entrena y exporta también los que se habrían publicado una semana antes (solo con
+   lo que se sabía entonces). Con ellos la web enseña, vela a vela, qué predijo el
+   modelo publicado en cada momento, también justo después del reentreno semanal.
 
 Escribe web/data/models.json y web/data/metrics.json. Con
 UPDOWN_BINANCE_URL=https://data-api.binance.vision/api/v3/klines funciona también
@@ -34,6 +37,8 @@ warnings.filterwarnings("ignore")
 SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
 INTERVAL = "15m"
 BARS = 70_000
+PREVIOUS = pd.Timedelta(days=7)        # los modelos de la web se reentrenan cada semana
+STEP = pd.Timedelta(minutes=15)
 OUT = os.path.join(os.path.dirname(__file__), "..", "web", "data")
 METRICS = ("n", "acierto", "auc", "p_auc_corregido", "skill_vs_siempre_sube", "bloques_ganados", "bloques",
            "freq_sube", "ventaja")
@@ -77,16 +82,21 @@ def main() -> None:
     print(rep.pivot("auc").round(4).to_string())
 
     generated = pd.Timestamp.now(tz="UTC").isoformat(timespec="seconds")
-    targets = []
+    data_to = data.index.max()             # última vela cerrada que han visto los modelos
+    previous_to = data_to - PREVIOUS
+    targets, previous = [], []
     metrics = {}
     t2 = time.time()
     for name, ycol, _, ahead in targets_of(data):
         labeled = data[data[ycol].notna()]
-        specs = {}
+        # Hace una semana solo se conocía el resultado de las filas que acaban antes de esa fecha.
+        known_then = labeled[labeled.index <= previous_to - ahead * STEP]
+        specs, old = {}, {}
         for m in ("siempre_sube", *WEB_MODELS):
-            model = make_model(m).fit(labeled[cols], labeled[ycol])
-            specs[m] = export_model(model, cols)
+            specs[m] = export_model(make_model(m).fit(labeled[cols], labeled[ycol]), cols)
+            old[m] = export_model(make_model(m).fit(known_then[cols], known_then[ycol]), cols)
         targets.append({"name": name, "candles_ahead": ahead, "models": specs})
+        previous.append({"name": name, "candles_ahead": ahead, "models": old})
         metrics[name] = {m: {k: _plain(rep.metrics.loc[(m, name), k]) for k in METRICS}
                          for m in rep.meta["modelos"]}
     print(f"modelos finales {time.time() - t2:.0f} s")
@@ -95,7 +105,8 @@ def main() -> None:
     _write(os.path.join(args.out, "models.json"), {
         **common, "features": cols,
         "trained_from": str(data.index.min()), "trained_to": str(data[data["up"].notna()].index.max()),
-        "targets": targets,
+        "data_to": data_to.isoformat(), "targets": targets,
+        "previous": {"data_to": previous_to.isoformat(), "targets": previous},
     })
     _write(os.path.join(args.out, "metrics.json"), {
         **common, "oos_from": rep.meta["desde"], "oos_to": rep.meta["hasta"], "folds": 6, "targets": metrics,

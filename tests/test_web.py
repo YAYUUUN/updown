@@ -84,3 +84,48 @@ def test_web_matches_python(tmp_path):
     for m, model in models.items():
         got = np.array(js["probs"]["vela_1"][m], dtype=float)[rows_idx]
         np.testing.assert_allclose(got, model.proba(test[cols]), rtol=0, atol=1e-9, err_msg=m)
+
+
+@pytest.mark.skipif(NODE is None, reason="hace falta Node.js para ejecutar el JavaScript de la web")
+def test_web_history_uses_the_model_published_at_each_candle(tmp_path):
+    """El historial de la web solo enseña velas que el modelo de ese momento no vio al entrenarse."""
+    rows = synthetic_klines()
+    bars = parse_binance_klines(rows)
+    data = dataset(bars, "15m", horizon=4, candles=4)
+    cols = feature_columns(data)
+    step = pd.Timedelta(minutes=15)
+    previous_to, data_to = data.index[1000], data.index[1250]   # dos reentrenos, como en la web
+
+    def fitted(ycol, ahead, until):
+        known = data[data[ycol].notna() & (data.index <= until - ahead * step)]
+        return make_model("ridge").fit(known[cols], known[ycol])
+
+    targets = {"vela_1": ("up_v1", 1), "hora": ("up", 4)}
+    models = {name: {when: fitted(ycol, ahead, until) for when, until in (("cur", data_to), ("prev", previous_to))}
+              for name, (ycol, ahead) in targets.items()}
+    def exported(when):
+        return [{"name": n, "candles_ahead": a, "models": {"ridge": export_model(models[n][when], cols)}}
+                for n, (_, a) in targets.items()]
+
+    spec = {"features": cols, "data_to": data_to.isoformat(), "targets": exported("cur"),
+            "previous": {"data_to": previous_to.isoformat(), "targets": exported("prev")}}
+    (tmp_path / "klines.json").write_text(json.dumps(rows))
+    (tmp_path / "models.json").write_text(json.dumps(spec))
+    res = subprocess.run([NODE, os.path.join(ROOT, "tests", "js", "history.mjs"),
+                          str(tmp_path / "klines.json"), str(tmp_path / "models.json")],
+                         capture_output=True, text=True, check=True)
+    js = json.loads(res.stdout)
+
+    for name, (ycol, ahead) in targets.items():
+        got = pd.DataFrame(js[name]["ridge"])
+        got.index = pd.to_datetime(got["time"], unit="ms", utc=True)
+        assert got.index.min() == previous_to                         # nada que el modelo ya hubiera visto
+        assert (got["source"] == np.where(got.index >= data_to, "current", "previous")).all()
+        for when, sub in (("prev", got[got.index < data_to]), ("cur", got[got.index >= data_to])):
+            np.testing.assert_allclose(sub["p"], models[name][when].proba(data.loc[sub.index, cols]), atol=1e-9)
+        truth = data.loc[got.index, ycol]
+        done = truth.notna().to_numpy()
+        assert (got["up"][done].astype(bool) == (truth[done] == 1)).all()
+        assert got["up"][~done].isna().all() and (~done).sum() == ahead  # las últimas aún no se saben
+        assert (got["hit"][done].astype(bool) == ((got["p"][done] > 0.5) == got["up"][done].astype(bool))).all()
+        assert (got["target"] - got["time"] == ahead * 900_000).all()

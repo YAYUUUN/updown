@@ -51,6 +51,43 @@
 
       <p class="disclaimer"><b>Research and educational tool. Not financial advice.</b> A 53% hit rate on 15-minute candles is small next to trading fees and spreads, which these numbers ignore. Read each probability together with the track record below it.</p>
 
+      <h3 class="table-title" id="recent-title">How it did on the latest candles</h3>
+      <p class="table-note" id="recent-note">Each candle with the prediction that the model published at the time made for it, and whether it was right. Only candles that model had not seen while training are shown.</p>
+      <div class="controls recent-controls">
+        <div class="seg" role="group" aria-label="Market" id="recent-symbols"></div>
+        <div class="seg" role="group" aria-label="Model" id="recent-models"></div>
+        <div class="seg" role="group" aria-label="Time window" id="recent-window"></div>
+      </div>
+      <p class="recent-summary" id="recent-summary" aria-live="polite">Loading the latest candles…</p>
+      <figure class="chart recent">
+        <div id="chart-recent" class="chart-box recent-box"></div>
+        <div class="tip" id="recent-tip" role="status" hidden></div>
+        <ul class="legend" id="legend-recent">
+          <li><svg class="key" viewBox="0 0 14 14" aria-hidden="true"><rect x="3" y="1" width="8" height="12" fill="var(--surface)" stroke="var(--ink)"/></svg>Candle closed up</li>
+          <li><svg class="key" viewBox="0 0 14 14" aria-hidden="true"><rect x="3" y="1" width="8" height="12" fill="var(--muted)" stroke="var(--muted)"/></svg>Closed down</li>
+          <li><svg class="key" viewBox="0 0 14 14" aria-hidden="true"><rect x="3" y="2" width="8" height="10" rx="1" fill="var(--hit)"/></svg>Prediction right</li>
+          <li><svg class="key" viewBox="0 0 14 14" aria-hidden="true"><rect x="3.5" y="2.5" width="7" height="9" rx="1" fill="none" stroke="var(--miss)" stroke-width="2"/></svg>Wrong</li>
+          <li><svg class="key" viewBox="0 0 14 14" aria-hidden="true"><rect x="3.5" y="2.5" width="7" height="9" rx="1" fill="none" stroke="var(--muted)" stroke-dasharray="2 1.5"/></svg>Not decided yet</li>
+        </ul>
+        <figcaption>Bottom strip: bars above the line predicted “up”, below it “down”; the longer the bar, the further the probability from 50%. “Up” means the candle closes above the previous close.</figcaption>
+      </figure>
+      <details class="recent-details">
+        <summary>Show these predictions as a table</summary>
+        <div class="table-wrap">
+          <table class="record" id="recent-table">
+            <thead><tr><th scope="col">Candle</th><th scope="col">Close</th><th scope="col">P(up)</th><th scope="col">Said</th><th scope="col">Result</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </details>
+      <div class="table-wrap recent-all">
+        <table class="record" id="recent-all">
+          <thead><tr><th scope="col">Market</th><th scope="col">Gradient boosting</th><th scope="col">Ridge</th><th scope="col">Candles that rose</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="table-note" id="recent-all-note"></p>
+
       <h3 class="table-title" id="record-title">Track record for this candle</h3>
       <p class="table-note" id="record-note"></p>
       <div class="table-wrap">
@@ -110,12 +147,13 @@
           <li>Your browser downloads the last 1,000 candles of each market from Binance’s public API, drops the one still open and computes the same <b data-fill="n-features">28</b> features as the Python package.</li>
           <li>Ridge and gradient boosting are exported from scikit-learn as plain numbers and trees, so the browser gets the same probabilities as Python. A test in CI checks that both agree.</li>
           <li>The models are retrained every week on about two years of candles (<span data-fill="trained">…</span>). The page has no analytics; its only outside requests go to Binance for the candles.</li>
+          <li>The latest-candles chart scores each candle with the model that was published at the time (this week's or last week's) and skips candles that model had already seen while training.</li>
         </ul>
         <h2>Limitations</h2>
         <ul class="points">
           <li>Statistically real is not economically useful: the edge is small next to trading costs.</li>
           <li>Two years of crypto data cover a limited set of market conditions; the next regime may behave differently.</li>
-          <li>The live numbers above are not a track record yet. The out-of-sample history is.</li>
+          <li>The latest-candles chart is recomputed in your browser, not a log written when each prediction was made, and a few days of candles say little: the long out-of-sample history is the track record.</li>
         </ul>
       </div>
     </div>

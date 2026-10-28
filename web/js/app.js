@@ -1,6 +1,7 @@
 // La página: resultados de los estudios (data/results.json), historial fuera de muestra de
 // los modelos de la web (data/metrics.json) y P(sube) en directo con velas de Binance.
 import { buildFeatures, dropUnclosed, featureRow, INTERVAL_MS, parseKlines } from "./features.js";
+import { dataTo, history, hitSummary } from "./history.js";
 import { predict } from "./models.js";
 
 const API = ["https://data-api.binance.vision", "https://api.binance.com"];
@@ -30,7 +31,12 @@ const MARKETS = [
   [/^BTCUSDT, 1 hora/, "BTC/USDT, hourly (Binance)"],
 ];
 
-const state = { target: "vela_1", models: null, metrics: null, live: null, error: null, offset: 0, next: 0, api: 0 };
+const WINDOWS = [[48, "12 h"], [96, "24 h"], [288, "3 days"]];
+
+const state = {
+  target: "vela_1", models: null, metrics: null, live: null, error: null, offset: 0, next: 0, api: 0,
+  recent: { symbol: "BTCUSDT", model: "gradient_boosting", window: matchMedia("(max-width: 560px)").matches ? 48 : 96 },
+};
 const $ = (sel) => document.querySelector(sel);
 const pct = (x, d = 1) => `${(x * 100).toFixed(d)}%`;
 const int = (x) => Math.round(x).toLocaleString("en-US");
@@ -76,6 +82,7 @@ function renderTargets() {
       box.querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
       renderCards();
       renderRecord();
+      renderRecent();
     });
     box.append(b);
   }
@@ -171,7 +178,8 @@ async function refresh() {
       const bars = dropUnclosed(parseKlines(rows), serverTime);
       const i = bars.time.length - 1;
       if (i < 0) return;
-      const row = featureRow(buildFeatures(bars), models.features, i);
+      const features = buildFeatures(bars);
+      const row = featureRow(features, models.features, i);
       let probs = null;
       if (row) {
         probs = {};
@@ -180,7 +188,7 @@ async function refresh() {
           for (const [name, spec] of Object.entries(target.models)) probs[target.name][name] = predict(spec, row);
         }
       }
-      live[sym] = { time: bars.time[i], close: bars.close[i], probs };
+      live[sym] = { time: bars.time[i], close: bars.close[i], probs, bars, features };
     }));
     state.live = live;
     state.error = null;
@@ -192,8 +200,265 @@ async function refresh() {
   }
   renderCards();
   renderStatus();
+  renderRecent();
   const wait = Math.max(state.next - (Date.now() + state.offset), 15_000);
   state.timer = setTimeout(refresh, wait);
+}
+
+// ---------- últimas velas: qué predijo y si acertó ----------
+
+const priceFmt = (x) => x.toLocaleString("en-US", { maximumFractionDigits: x >= 1000 ? 0 : x >= 10 ? 2 : 4 });
+const when = (ms) => new Date(ms).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+
+// Los botones se crean una vez (así no se pierde el foco del teclado al pulsar) y luego solo cambia cuál está pulsado.
+function seg(box, items, current, onPick) {
+  if (box.children.length !== items.length) {
+    box.innerHTML = "";
+    for (const [value, label] of items) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = label;
+      b.dataset.value = String(value);
+      b.addEventListener("click", () => onPick(value));
+      box.append(b);
+    }
+  }
+  for (const b of box.children) b.setAttribute("aria-pressed", String(b.dataset.value === String(current)));
+}
+
+function renderRecentControls() {
+  const r = state.recent;
+  const symbols = state.models?.symbols ?? ["BTCUSDT", "ETHUSDT", "SOLUSDT"];
+  seg($("#recent-symbols"), symbols.map((s) => [s, symLabel(s)]), r.symbol, (v) => { r.symbol = v; renderRecent(); });
+  seg($("#recent-models"), LIVE_MODELS.map((m) => [m, MODEL_NAMES[m]]), r.model, (v) => { r.model = v; renderRecent(); });
+  seg($("#recent-window"), WINDOWS, r.window, (v) => { r.window = v; renderRecent(); });
+}
+
+function recentSummary(sym, rows, firstShown) {
+  const r = state.recent;
+  const s = hitSummary(rows);
+  const span = WINDOWS.find(([w]) => w === r.window)?.[1] ?? "";
+  const who = `${MODEL_NAMES[r.model].toLowerCase()} on ${symLabel(sym)}`;
+  if (!s.n) {
+    return rows.length
+      ? `No decided candles in the last ${span} yet for ${who}.`
+      : `No candles to score yet for ${who}: the published model has seen everything up to ` +
+        `${when(dataTo(state.models))}. Its predictions appear here as new candles close.`;
+  }
+  let text = `Last ${span}, ${who}: right on <b>${s.k} of ${s.n}</b> decided candles (${pct(s.rate)}; 95% interval ` +
+    `${pct(s.lo, 0)}–${pct(s.hi, 0)}). ${s.ups} of them closed up, so “always up” would have scored ${pct(s.ups / s.n)}.`;
+  if (s.lo <= 0.5 && s.hi >= 0.5) text += " With this few candles that is compatible with a coin flip; the long track record below is what counts.";
+  if (firstShown > 0) text += ` The first ${firstShown} candles of the window are not scored: the model had already seen them.`;
+  return text;
+}
+
+function recentChart(sym, live, rows) {
+  const r = state.recent;
+  const { bars } = live;
+  const n = bars.time.length;
+  const ahead = state.models.targets.find((t) => t.name === state.target).candles_ahead;
+  const N = Math.min(r.window, n);
+  const k0 = n - N;
+  const slots = N + ahead;                 // velas cerradas + las que aún deciden predicciones pendientes
+  const byTarget = new Map(rows.map((x) => [x.index + ahead, x]));
+  // Al ancho real del recuadro: así el texto mide 12 px también en el móvil.
+  const W = Math.max(300, Math.round(($("#chart-recent").clientWidth || 744) - 26));
+  const L = 6, R = 66, T = 24, PH = 220, GAP = 16, LH = 58, B = 28;
+  const H = T + PH + GAP + LH + B;
+  const slot = (W - L - R) / slots;
+  const bw = Math.max(1, Math.min(slot * 0.62, 12));
+  const cx = (s) => L + (s + 0.5) * slot;
+  let lo = Infinity, hi = -Infinity;
+  for (let k = k0; k < n; k++) { lo = Math.min(lo, bars.low[k]); hi = Math.max(hi, bars.high[k]); }
+  const pad = (hi - lo) * 0.06 || hi * 0.001;
+  lo -= pad; hi += pad;
+  const y = (v) => T + PH * (1 - (v - lo) / (hi - lo));
+  let g = "";
+
+  // ejes: precios a la derecha, cuadrícula fina
+  const rough = (hi - lo) / 4;
+  const mag = 10 ** Math.floor(Math.log10(rough));
+  const stepY = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((m) => m >= rough);
+  for (let v = Math.ceil(lo / stepY) * stepY; v <= hi; v += stepY) {
+    const yy = y(v).toFixed(1);
+    g += `<line class="grid" x1="${L}" x2="${W - R}" y1="${yy}" y2="${yy}"/>`;
+    g += `<text x="${W - R + 8}" y="${(+yy + 4).toFixed(1)}">${priceFmt(v)}</text>`;
+  }
+  // horas abajo, separadas al menos 76 px
+  const tickH = [1, 2, 3, 4, 6, 12, 24].find((h) => h * 4 * slot >= 76) ?? 24;
+  for (let s = 0; s < N; s++) {
+    const d = new Date(bars.time[k0 + s]);
+    if (d.getMinutes() !== 0 || d.getHours() % tickH !== 0) continue;
+    const label = d.getHours() === 0 ? d.toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : clock(bars.time[k0 + s]);
+    g += `<text x="${cx(s).toFixed(1)}" y="${H - 8}" text-anchor="middle">${label}</text>`;
+  }
+
+  // dónde empieza lo que el modelo no había visto, y el cambio de modelo si cae en la ventana
+  const firstScored = rows.length ? rows[0].index + ahead : Infinity;
+  const marks = [];
+  if (firstScored > k0 && firstScored < n) marks.push([firstScored - k0, "not seen by the model from here →"]);
+  const sw = rows.find((x, i) => i > 0 && x.source !== rows[i - 1].source);
+  if (sw && sw.index + ahead > k0 && sw.index + ahead < n) marks.push([sw.index + ahead - k0, "model retrained"]);
+  let lastLabelX = -Infinity;
+  for (const [s, label] of marks) {
+    const xx = (L + s * slot).toFixed(1);
+    g += `<line class="edge" x1="${xx}" x2="${xx}" y1="${T - 6}" y2="${T + PH + GAP + LH}"/>`;
+    if (+xx - lastLabelX > 170 && +xx < W - R - 60) {
+      g += `<text class="note" x="${+xx + 5}" y="${T - 10}">${label}</text>`;
+      lastLabelX = +xx;
+    }
+  }
+
+  // velas: huecas si cierran arriba, rellenas si cierran abajo
+  for (let s = 0; s < N; s++) {
+    const k = k0 + s;
+    const o = bars.open[k], c = bars.close[k];
+    const x = cx(s);
+    const top = y(Math.max(o, c)), bot = y(Math.min(o, c));
+    const up = c >= o;
+    g += `<line class="${up ? "wick" : "wick down"}" x1="${x.toFixed(1)}" x2="${x.toFixed(1)}" y1="${y(bars.high[k]).toFixed(1)}" y2="${y(bars.low[k]).toFixed(1)}"/>`;
+    g += `<rect class="${up ? "body" : "body down"}" x="${(x - bw / 2).toFixed(1)}" y="${top.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(bot - top, 1).toFixed(1)}"/>`;
+  }
+
+  // franja de predicciones: arriba = dijo que subía, abajo = que bajaba; largo = distancia al 50 %
+  const y0 = T + PH + GAP + LH / 2;
+  g += `<line class="grid" x1="${L}" x2="${W - R}" y1="${y0}" y2="${y0}"/>`;
+  g += `<text x="${W - R + 8}" y="${T + PH + GAP + 9}">60%</text><text x="${W - R + 8}" y="${y0 + 4}">50%</text>` +
+    `<text x="${W - R + 8}" y="${T + PH + GAP + LH}">40%</text>`;
+  for (let s = 0; s < slots; s++) {
+    const x = byTarget.get(k0 + s);
+    if (!x) continue;
+    const h = Math.max(2, (Math.min(Math.abs(x.p - 0.5), 0.1) / 0.1) * (LH / 2 - 3));
+    const yy = x.p > 0.5 ? y0 - h : y0;
+    const cls = x.hit === null ? "pending" : x.hit ? "hit" : bw >= 3 ? "miss" : "miss thin";
+    const inset = cls === "hit" || cls === "miss thin" ? 0 : 0.75;
+    g += `<rect class="${cls}" x="${(cx(s) - bw / 2 + inset).toFixed(1)}" y="${(yy + inset).toFixed(1)}" ` +
+      `width="${Math.max(bw - 2 * inset, 0.8).toFixed(1)}" height="${Math.max(h - 2 * inset, 1).toFixed(1)}" rx="1"/>`;
+  }
+  g += `<rect class="cursor" id="recent-cursor" x="0" y="${T - 6}" width="${slot.toFixed(2)}" height="${PH + GAP + LH + 6}" visibility="hidden"/>`;
+  const label = `${symLabel(sym)} 15-minute candles for the last ${N} periods, with the prediction made for each one and whether it was right`;
+  return { svg: svg(W, H, g, label), geom: { W, L, slot, slots, k0, n, ahead, byTarget } };
+}
+
+function tipHTML(sym, live, geom, s) {
+  const { bars } = live;
+  const k = geom.k0 + s;
+  const x = geom.byTarget.get(k);
+  const closed = k < geom.n;
+  const start = closed ? bars.time[k] : bars.time[geom.n - 1] + (k - geom.n + 1) * INTERVAL_MS;
+  let h = `<b>${symLabel(sym)} · ${clock(start)}–${clock(start + INTERVAL_MS)}</b>`;
+  if (closed) h += `<br>Open ${priceFmt(bars.open[k])} · close ${priceFmt(bars.close[k])}`;
+  else h += "<br>Candle not closed yet";
+  if (!x) return h + "<br><span class=\"muted\">Not scored: the model had already seen this candle.</span>";
+  const said = x.p > 0.5 ? "up" : "down";
+  h += `<br>${MODEL_NAMES[state.recent.model]} said <b>${said}</b> (P(up) ${pct(x.p)}) when the ${clock(x.time)} candle closed`;
+  h += x.hit === null ? "<br>Not decided yet" : x.hit ? "<br><b>✓ Right</b>" : "<br><b>✗ Wrong</b>";
+  h += `<br><span class="muted">${x.source === "current" ? "Current model" : "Model published the week before"}</span>`;
+  return h;
+}
+
+function wireRecentHover(sym, live, geom) {
+  const box = $("#chart-recent");
+  const svgEl = box.querySelector("svg");
+  const tip = $("#recent-tip");
+  const cursor = svgEl.querySelector("#recent-cursor");
+  let current = -1;
+  const show = (s, clientX, clientY) => {
+    if (s < 0 || s >= geom.slots) { hide(); return; }
+    current = s;
+    cursor.setAttribute("x", (geom.L + s * geom.slot).toFixed(2));
+    cursor.setAttribute("visibility", "visible");
+    tip.innerHTML = tipHTML(sym, live, geom, s);
+    tip.hidden = false;
+    const fig = box.parentElement.getBoundingClientRect();
+    const rect = svgEl.getBoundingClientRect();
+    const px = clientX ?? rect.left + ((geom.L + (s + 0.5) * geom.slot) / geom.W) * rect.width;
+    const py = clientY ?? rect.top + rect.height * 0.3;
+    let left = px - fig.left + 14;
+    if (left + tip.offsetWidth > fig.width) left = Math.max(px - fig.left - tip.offsetWidth - 14, 0);
+    tip.style.left = `${left}px`;
+    tip.style.top = `${Math.max(py - fig.top - tip.offsetHeight - 10, 0)}px`;
+  };
+  const hide = () => { current = -1; tip.hidden = true; cursor.setAttribute("visibility", "hidden"); };
+  const slotAt = (clientX) => {
+    const rect = svgEl.getBoundingClientRect();
+    const x = ((clientX - rect.left) / rect.width) * geom.W;
+    return Math.floor((x - geom.L) / geom.slot);
+  };
+  svgEl.addEventListener("pointermove", (e) => show(slotAt(e.clientX), e.clientX, e.clientY));
+  svgEl.addEventListener("pointerleave", hide);
+  svgEl.setAttribute("tabindex", "0");
+  svgEl.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+      e.preventDefault();
+      const s = current < 0 ? geom.slots - 1 : current + (e.key === "ArrowRight" ? 1 : -1);
+      show(Math.min(Math.max(s, 0), geom.slots - 1));
+    } else if (e.key === "Escape") hide();
+  });
+  svgEl.addEventListener("blur", hide);
+}
+
+function recentTable(rows, live) {
+  const { bars } = live;
+  const body = $("#recent-table tbody");
+  body.innerHTML = rows.slice().reverse().map((x) => {
+    const k = x.index + (x.target - x.time) / INTERVAL_MS;
+    const close = k < bars.time.length ? priceFmt(bars.close[k]) : "–";
+    const result = x.hit === null ? "not decided" : x.hit ? "✓ right" : "✗ wrong";
+    return `<tr><td>${when(x.target)}</td><td>${close}</td><td>${pct(x.p)}</td><td>${x.p > 0.5 ? "up" : "down"}</td>` +
+      `<td class="text">${result}</td></tr>`;
+  }).join("");
+}
+
+function recentAll() {
+  const body = $("#recent-all tbody");
+  const symbols = state.models.symbols;
+  let since = Infinity, most = 0;
+  body.innerHTML = symbols.map((sym) => {
+    const live = state.live?.[sym];
+    if (!live?.bars) return `<tr><td>${symLabel(sym)}</td><td colspan="3" class="text">No live data.</td></tr>`;
+    let ups = "–";
+    const cells = LIVE_MODELS.map((m) => {
+      const rows = history(live.bars, live.features, state.models, state.target, m);
+      if (rows.length) since = Math.min(since, rows[0].target);
+      const s = hitSummary(rows);
+      if (s.n) ups = pct(s.ups / s.n);
+      most = Math.max(most, s.n);
+      return s.n ? `${pct(s.rate)} <small>of ${int(s.n)}</small>` : "–";
+    });
+    return `<tr><td>${symLabel(sym)}</td>${cells.map((c) => `<td>${c}</td>`).join("")}<td>${ups}</td></tr>`;
+  }).join("");
+  $("#recent-all-note").textContent = Number.isFinite(since)
+    ? `Hit rate on every scored candle your browser has (since ${when(since)}), for this target. With ${int(most)} ` +
+      `candles the 95% interval is about ±${(196 * Math.sqrt(0.25 / most)).toFixed(0)} points, so small differences ` +
+      "between models mean nothing here."
+    : "";
+}
+
+function renderRecent() {
+  if (!state.models) return;
+  renderRecentControls();
+  const r = state.recent;
+  const live = state.live?.[r.symbol];
+  const summary = $("#recent-summary");
+  $("#recent-note").textContent = `${TARGETS[state.target].question} Each candle shows the prediction that the model ` +
+    "published at the time made for it. Only candles that model had not seen while training are scored.";
+  if (state.error || !live?.bars) {
+    summary.textContent = state.error ? "Live data unavailable: Binance did not answer from your network." : "Loading the latest candles…";
+    $("#chart-recent").innerHTML = "";
+    return;
+  }
+  const rows = history(live.bars, live.features, state.models, state.target, r.model);
+  const ahead = state.models.targets.find((t) => t.name === state.target).candles_ahead;
+  const k0 = live.bars.time.length - Math.min(r.window, live.bars.time.length);
+  const inWindow = rows.filter((x) => x.index + ahead >= k0);
+  const firstScored = rows.length ? rows[0].index + ahead : live.bars.time.length;
+  summary.innerHTML = recentSummary(r.symbol, inWindow, Math.max(0, Math.min(firstScored, live.bars.time.length) - k0));
+  const { svg: chart, geom } = recentChart(r.symbol, live, rows);
+  $("#chart-recent").innerHTML = chart;
+  wireRecentHover(r.symbol, live, geom);
+  recentTable(inWindow, live);
+  recentAll();
 }
 
 // ---------- resultados de los estudios ----------
@@ -362,6 +627,12 @@ async function main() {
     el.textContent = `this version uses data up to ${day(models.value.trained_to)}`;
   });
   $("#generated").textContent = `Models trained ${day(models.value.generated)}`;
+  renderRecent();
+  let width = innerWidth, pending;
+  addEventListener("resize", () => {
+    clearTimeout(pending);
+    pending = setTimeout(() => { if (innerWidth !== width) { width = innerWidth; renderRecent(); } }, 200);
+  });
   setInterval(renderStatus, 1000);
   refresh();
 }

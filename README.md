@@ -6,7 +6,7 @@
 
 Most "price prediction" projects report a nice backtest. This one is built the other way round: first an evaluator that is hard to fool (and is tested to catch its own mistakes), then the models. In liquid markets the usual answer is "no demonstrated edge", and the tool says so.
 
-**Live demo: [yayuuun.github.io/updown](https://yayuuun.github.io/updown/).** Two of the models run in your browser on BTC, ETH and SOL, each probability next to that model's out-of-sample track record.
+**Live demo: [yayuuun.github.io/updown](https://yayuuun.github.io/updown/).** Two of the models run in your browser on BTC, ETH and SOL, each probability next to that model's out-of-sample track record, with a candlestick chart of the latest candles showing what was predicted for each one and whether it was right.
 
 > Research and educational tool. **Not financial advice**, not a trading system. It does not place orders.
 
@@ -96,6 +96,7 @@ The **web app** shows which stage each market is in right now (rule-based label 
 [yayuuun.github.io/updown](https://yayuuun.github.io/updown/) is the static page in `web/`, served by GitHub Pages with no server behind it. Your browser downloads the last 1,000 15-minute candles of BTC, ETH and SOL from Binance, drops the one still open, computes the same features as `updown/features.py` (ported line by line to `web/js/features.js`) and runs `ridge` and `gradient_boosting`, which `updown/export.py` turns into plain coefficients and trees.
 
 - `python -m estudios.web_modelos` downloads about two years of candles, evaluates both models with the same purged walk-forward and writes `web/data/models.json` and `web/data/metrics.json`. The Pages workflow reruns it every Monday.
+- **Latest candles.** The page draws the last 12 hours to 3 days of candles with the prediction made for each one and whether it was right. Each candle uses the model published at the time: `models.json` carries the current models and the ones from a week earlier, each with the last candle it saw, and a candle only counts if that model had not seen it. The predictions are recomputed in your browser, not logged when they were made; `updown live` keeps that kind of log.
 - `python -m estudios.web_resultados` turns the tables in `estudios/resultados_*.md` into `web/data/results.json`, so no number on the page is typed by hand.
 - `tests/test_web.py` runs the JavaScript with Node and checks that its features and probabilities match Python's.
 
